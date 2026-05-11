@@ -25,3 +25,20 @@ This Repo contains the configurations file for the validation of DREEM for bare 
 To correcly run the script you need to export the following environment variables:
 - `MANAGEMENT_KUBECONFIG`: the path to the kubeconfig file of the management cluster (the cluster where DREEM, CAPI and Metal3 are deployed).
 - `TARGET_KUBECONFIG`: the path to the kubeconfig file of the workload cluster (the cluster where the microservice application will be deployed and where the traffic will be generated).
+
+N.B. Install the Metric Server on the target cluster to be able to use HPA
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+echo "⚙️ patch metrics-server to run local..."
+kubectl patch deployment metrics-server -n kube-system \
+  --type=json \
+  -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+
+```
+
+Once the environment has been set up and the microservice application has been deployed on the target cluster, you can run the tests by executing:
+```bash
+python3 Benchmarks/Runner/Runner.py -c Configs/RunnerParameters.json
+```
+This will generate the load on the target cluster.

@@ -1,0 +1,106 @@
+{
+   "WorkModelParameters":{
+      "f1": {
+         "type":"function",
+         "value": {
+            "name": "run_stress_ng",
+            "recipient": "service",
+            "probability":0.25,
+            "parameters": {
+               "n_cpu": 16,
+               "cpu_ops": 20000,
+               "fixed": true
+            },
+            "workers":4,
+            "threads":64,
+            "cpu-requests": "250m",
+            "cpu-limits": "17000m",
+            "replicas": 2,
+            "pod_antiaffinity": true,
+            "pod_topology_spread": true,
+            "max_skew": 2
+
+         }
+      },
+      "f2": {
+         "type":"function",
+         "value": {
+            "name": "run_stress_ng",
+            "recipient": "service",
+            "probability":0.25,
+            "parameters": {
+               "n_cpu": 10,
+               "cpu_ops": 10000,
+               "fixed": true
+            },
+            "workers":4,
+            "threads":128,
+            "cpu-requests": "250m",
+            "cpu-limits": "6500m", 
+            "replicas": 3,
+            "pod_antiaffinity": true,
+            "pod_topology_spread": true,
+            "max_skew": 3
+         }
+      },
+      "f3": {
+         "type":"function",
+         "value": {
+            "name": "run_stress_ng",
+            "recipient": "service",
+            "probability":0.25,
+            "parameters": {
+               "n_cpu": 5,
+               "duration":3,
+               "fixed": false
+            },
+            "workers":4,
+            "threads":128,
+            "cpu-requests": "250m",
+            "cpu-limits": "5500m",
+            "replicas": 3,
+            "pod_antiaffinity": true,
+            "pod_topology_spread": true,
+            "max_skew": 3
+         }
+      },
+      "f4": {
+         "type":"function",
+         "value": {
+            "name": "run_stress_ng",
+            "recipient": "service",
+            "probability":0.25,
+            "parameters": {
+               "n_cpu": 8,
+               "duration": 1,
+               "fixed": false
+            },
+            "workers":4,
+            "threads":128,
+            "cpu-requests": "250m",
+            "cpu-limits": "8500m",
+            "replicas": 2,
+            "pod_antiaffinity": true,
+            "pod_topology_spread": true,
+            "max_skew": 3
+            }
+         },
+      
+      "request_method":{
+         "type": "metadata",
+         "value":"grpc"
+      },
+      "databases_prefix": {
+         "type":"metadata",
+         "value": "sdb"
+      },
+      "ServiceGraphFilePath": {
+         "type": "metadata",
+         "value":"Examples/Alibaba/traces-mbench/par/app7/service_graph.json"
+      },
+      "OutputPath": {
+         "type":"metadata",
+         "value":"SimulationWorkspace"
+      }
+   }
+}

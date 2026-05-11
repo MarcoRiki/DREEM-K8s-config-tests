@@ -1,0 +1,18 @@
+{
+   "K8sParameters": {
+      "prefix_yaml_file":"mubench",
+      "namespace": "default",
+      "image": "harbor.crownlabs.polito.it/cloud-sandbox/s324163/mubenchcustom/microservice-screen:latest",
+      "cluster_domain": "cluster",
+      "path": "/api/v1",
+      "sleep": 0,
+      "dns-resolver":"kube-dns.kube-system.svc.cluster.local",
+      "scheduler-name": "default-scheduler",
+      "nginx-gw": true,
+      "nginx-svc-type": "NodePort",
+      "no-apply": false
+   },
+   "InternalServiceFilePath": "CustomFunctions",
+   "OutputPath": "SimulationWorkspace",
+   "WorkModelPath": "SimulationWorkspace/workmodel.json"
+}

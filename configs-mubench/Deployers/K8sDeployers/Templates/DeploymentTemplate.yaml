@@ -1,0 +1,81 @@
+apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
+kind: Deployment
+metadata:
+  name: {{SERVICE_NAME}}
+  namespace: {{NAMESPACE}}
+  labels:
+    zone: default
+    app: {{SERVICE_NAME}}
+    version: "1.0"
+  annotations:
+    something: something
+spec:
+  selector:
+    matchLabels:
+      app: {{SERVICE_NAME}}
+  replicas: {{REPLICAS}}
+  {{NODE_AFFINITY}}
+  template:
+    metadata:
+      labels:
+        zone: default
+        app: {{SERVICE_NAME}}
+        version: "1.0"
+        prometheus.io/scrape: 'true'
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8080'
+    spec:
+      terminationGracePeriodSeconds : 3
+      schedulerName: {{SCHEDULER_NAME}}
+      containers:
+        - name: {{SERVICE_NAME}}
+          image: {{IMAGE}}
+          ports:
+            - name: http-mubpodport
+              containerPort: 8080
+          volumeMounts:
+            - name: podinfo
+              mountPath: /etc/podinfo
+            - name: microservice-workmodel
+              mountPath: /app/MSConfig
+            - name: microservice-internal-services
+              mountPath: /app/MSConfig/InternalServiceFunctions
+          env:
+            - name: APP
+              value: {{SERVICE_NAME}}
+            - name: ZONE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['zone']
+            - name: K8S_APP
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app']
+            - name: PN
+              value: {{PN}}
+            - name: TN
+              value: {{TN}}
+          resources: {{RESOURCES}}    
+        
+        {{SIDECAR}}
+
+      {{POD_ANTIAFFINITY}}
+      {{TOPOLOGY_SPREAD}}
+
+      volumes:
+        - name: podinfo
+          downwardAPI:
+            items:
+              - path: "labels"
+                fieldRef:
+                  fieldPath: metadata.labels
+              - path: "annotations"
+                fieldRef:
+                  fieldPath: metadata.annotations
+        - name: microservice-workmodel
+          configMap:
+            name: workmodel
+        - name: microservice-internal-services
+          configMap:
+            name: internal-services

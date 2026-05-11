@@ -21,5 +21,17 @@ export NUM_NODES=4
 
 4. Once the environment is deployed, you can follow the instructions in the `DREEM` repository to deploy it on the management cluster (the minikube VM) and run the tests on the workload cluster (the 3+1 nodes created by Metal3).
 
-5. Follow the instruction in the `README.md` file of this repository to run the `run.sh` script to deploy the same microservice application and generate the traffic as the one used for the DREEM validation.
+5. install the CNI to make the cluster Ready
+```bash
+CILIUM_CLI_VERSION=$(curl -s https://raw.githubusercontent.com/cilium/cilium-cli/main/stable.txt)
+CLI_ARCH=amd64
+if [ "$(uname -m)" = "aarch64" ]; then CLI_ARCH=arm64; fi
+curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/${CILIUM_CLI_VERSION}/cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+sha256sum --check cilium-linux-${CLI_ARCH}.tar.gz.sha256sum
+sudo tar xzvfC cilium-linux-${CLI_ARCH}.tar.gz /usr/local/bin
+rm cilium-linux-${CLI_ARCH}.tar.gz{,.sha256sum}
+
+cilium install --version 1.19.1
+```
+6. Follow the instruction in the `README.md` file of this repository to run the `run.sh` script to deploy the same microservice application and generate the traffic as the one used for the DREEM validation.
 

@@ -1,0 +1,12 @@
+{
+   "TrafficParameters":{
+      "ingress_service":["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12"],
+      "request_parameters": {
+         "mean_interarrival_time": 300,
+         "stop_event": 10000
+      }
+   },
+   "OutputPath": "SimulationWorkspace",
+   "OutputFile": "2-workload-medium.json"
+
+}
