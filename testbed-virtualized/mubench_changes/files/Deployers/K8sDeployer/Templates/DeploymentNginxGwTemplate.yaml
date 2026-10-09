@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gw-nginx
+  namespace: {{NAMESPACE}}
+  labels:  
+    app: gw-nginx
+    version: "1.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+        app: gw-nginx
+  template:
+    metadata:
+      labels:
+        app: gw-nginx
+        version: "1.0"
+    spec:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+
+      # 2. TOLLERA il blocco di sicurezza (Taint) del control-plane
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: gw-nginx
+        image: nginx
+        ports:
+        - name: http-nginx
+          containerPort: 80
+        volumeMounts:
+        - mountPath: /etc/nginx/nginx.conf
+          readOnly: true
+          name: config-volume
+          subPath: nginx.conf
+        - mountPath: /var/log/nginx
+          name: log
+      schedulerName: {{SCHEDULER_NAME}}
+      volumes:
+      - name: config-volume
+        configMap:
+          name: gw-nginx
+      - name: log
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gw-nginx
+  namespace: {{NAMESPACE}}
+spec:
+  type: {{SVCTYPE}}
+  ports:
+    - port: 80
+      protocol: TCP
+      targetPort: 80
+      nodePort: 31113
+      name: http-nginx
+  selector:
+    app: gw-nginx
+

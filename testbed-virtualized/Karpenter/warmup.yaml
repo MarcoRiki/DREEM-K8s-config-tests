@@ -1,0 +1,49 @@
+# Warm start of the Karpenter arm (workload cluster), applied by test_Karpenter.sh.
+#
+# The other arms start with every worker on. Karpenter can only manage nodes it created,
+# so the arm starts with the base workers plus one Karpenter node per remaining host: the
+# script scales this Deployment to that number, one pod per node (anti-affinity), on
+# Karpenter nodes only (nodeSelector). Once the nodes are up the controller is switched off
+# and the namespace deleted; the nodes stay, empty, until the workload is deployed.
+#
+# Its own namespace, without Istio injection: a pod left Pending here never counts as a
+# Pending application pod (the dashboards count namespace "default").
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: karpenter-warmup
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: karpenter-warmup
+  namespace: karpenter-warmup
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: karpenter-warmup
+  template:
+    metadata:
+      labels:
+        app: karpenter-warmup
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      nodeSelector:
+        karpenter.sh/nodepool: metal3
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: karpenter-warmup
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+      terminationGracePeriodSeconds: 0

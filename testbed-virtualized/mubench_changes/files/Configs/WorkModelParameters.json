@@ -1,0 +1,98 @@
+{
+   "WorkModelParameters":{
+      "f1": {
+         "type":"function",
+         "value": {
+            "name": "run_stress_ng",
+            "recipient": "service",
+            "probability":0.25,
+            "parameters": {
+               "n_cpu": 2,
+               "cpu_ops": 5000,
+               "fixed": true
+            },
+            "workers":4,
+            "threads":64,
+            "cpu-requests": "2500m",
+            "pod_antiaffinity": true,
+            "replicas": 2,
+            "taints": "small"
+
+         }
+      },
+      "f2": {
+         "type":"function",
+         "value": {
+            "name": "run_stress_ng",
+            "recipient": "service",
+            "probability":0.25,
+            "parameters": {
+               "n_cpu": 5,
+               "cpu_ops": 10000,
+               "fixed": true
+            },
+            "workers":4,
+            "threads":128,
+            "cpu-requests": "5000m",
+            "pod_antiaffinity": true,
+            "replicas": 2,
+            "taints": "big"
+         }
+      },
+      "f3": {
+         "type":"function",
+         "value": {
+            "name": "run_stress_ng",
+            "recipient": "service",
+            "probability":0.25,
+            "parameters": {
+               "n_cpu": 2,
+               "cpu_ops": 5000,
+               "fixed": true
+            },
+            "workers":4,
+            "threads":64,
+            "cpu-requests": "2000m",
+            "pod_antiaffinity": true,
+            "replicas": 2,
+            "taints": "small"
+         }
+      },
+      "f4": {
+         "type":"function",
+         "value": {
+            "name": "run_stress_ng",
+            "recipient": "service",
+            "probability":0.25,
+            "parameters": {
+               "n_cpu": 4,
+               "cpu_ops": 10000,
+               "fixed": true
+            },
+            "workers":4,
+            "threads":128,
+            "cpu-requests": "3000m",
+            "pod_antiaffinity": true,
+            "taints": "big",
+            "replicas": 3
+         }
+      },
+      
+      "request_method":{
+         "type": "metadata",
+         "value":"grpc"
+      },
+      "databases_prefix": {
+         "type":"metadata",
+         "value": "sdb"
+      },
+      "ServiceGraphFilePath": {
+         "type": "metadata",
+         "value":"Examples/Alibaba/traces-mbench/par/app24/service_graph.json"
+      },
+      "OutputPath": {
+         "type":"metadata",
+         "value":"SimulationWorkspace"
+      }
+   }
+}

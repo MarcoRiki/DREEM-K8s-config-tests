@@ -1,0 +1,37 @@
+# Feasibility check (workload cluster): two pods that only Karpenter nodes can host, one
+# per node. Scaling to 2 must make Karpenter create two Machines; scaling back to 0 must
+# make it remove them after consolidateAfter (10 min). See README.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: karpenter-smoke
+  namespace: default
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: karpenter-smoke
+  template:
+    metadata:
+      labels:
+        app: karpenter-smoke
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      nodeSelector:
+        karpenter.sh/nodepool: metal3
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: karpenter-smoke
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: 500m
+              memory: 128Mi
+      terminationGracePeriodSeconds: 0

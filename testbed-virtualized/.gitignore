@@ -1,0 +1,12 @@
+# upstream checkouts created by the apply-changes.sh scripts
+/metal3-dev-env/
+/muBench/
+
+# experiment results and logs
+/testbed/Result/
+/Karpenter/feasibility-check-*.log
+
+# Python and Jupyter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/

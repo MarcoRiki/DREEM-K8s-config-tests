@@ -1,0 +1,48 @@
+# Karpenter resources in the WORKLOAD cluster (after the CRDs in crds/).
+#
+#   kubectl --kubeconfig ~/workload.kubeconfig apply -f nodepool.yaml
+#
+# The node class selects the MachineDeployment created by machinedeployment.sh (the only
+# one carrying the karpenter-member label); the NodePool adds at most 5 nodes, so that with
+# the 3 workers of the base MachineDeployment the fleet tops out at the same 8 as DREEM and
+# Cluster Autoscaler.
+---
+apiVersion: karpenter.cluster.x-k8s.io/v1alpha1
+kind: ClusterAPINodeClass
+metadata:
+  name: metal3
+spec:
+  scalableResourceSelector:
+    matchLabels:
+      nodepool: nodepool-karpenter
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: metal3
+spec:
+  template:
+    spec:
+      requirements:
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+      nodeClassRef:
+        group: karpenter.cluster.x-k8s.io
+        kind: ClusterAPINodeClass
+        name: metal3
+      # never replace a node because of its age during a run
+      expireAfter: Never
+  limits:
+    # 5 workers of 10 vCPUs
+    cpu: "50"
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    # the same 10 minutes Cluster Autoscaler waits (--scale-down-unneeded-time)
+    consolidateAfter: 10m
+    budgets:
+      # one node at a time
+      - nodes: "1"

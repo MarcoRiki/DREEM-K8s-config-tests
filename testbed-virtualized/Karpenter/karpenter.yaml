@@ -1,0 +1,162 @@
+# Karpenter (Cluster API provider) in the MANAGEMENT cluster, next to Cluster Autoscaler.
+#
+# Like CA, it reaches the workload cluster through the kubeconfig secret
+# dreem-mmiracapillo-cluster-kubeconfig (see ../CA/README.md); Karpenter core uses it for
+# Nodes, Pods, NodePools and NodeClaims (KUBECONFIG). The Cluster API objects are read and
+# changed in this cluster with the pod's own service account (CLUSTER_API_KUBECONFIG):
+# without that setting the provider would look for Machines in the workload cluster.
+#
+# Apply with:
+#   export KARPENTER_IMAGE=harbor.ng.crownlabs.polito.it/marco-miracapillo/karpenter-clusterapi-controller:9dc28cf@sha256:3eb8da35106d3e9b7aaaaa87f627ad169369217c8484a08be8caeec0f6042a60
+#   envsubst < karpenter.yaml | kubectl apply -f -
+# The Deployment starts with 0 replicas: test_Karpenter.sh scales it to 1 for its arm.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: karpenter
+  namespace: kube-system
+---
+# Cluster API objects the provider reads and changes: MachineDeployment replicas, the
+# delete-machine annotation and the membership label on the Machines it claims
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: karpenter-clusterapi
+rules:
+  - apiGroups: ["cluster.x-k8s.io"]
+    resources: ["machinedeployments", "machinesets", "machines"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: karpenter-clusterapi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: karpenter-clusterapi
+subjects:
+  - kind: ServiceAccount
+    name: karpenter
+    namespace: kube-system
+---
+# Kubeconfig for this (management) cluster, built on the pod's service-account token
+# (re-read on rotation)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: karpenter-mgmt-kubeconfig
+  namespace: kube-system
+data:
+  kubeconfig: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+      - name: management
+        cluster:
+          server: https://kubernetes.default.svc
+          certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    users:
+      - name: karpenter
+        user:
+          tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    contexts:
+      - name: management
+        context:
+          cluster: management
+          user: karpenter
+    current-context: management
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: karpenter
+  namespace: kube-system
+  labels:
+    app: karpenter
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: karpenter
+  template:
+    metadata:
+      labels:
+        app: karpenter
+    spec:
+      serviceAccountName: karpenter
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+      containers:
+        - name: karpenter
+          image: ${KARPENTER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command: ["/karpenter-clusterapi-controller"]
+          env:
+            # Nodes, Pods, NodePools, NodeClaims: the workload cluster
+            - name: KUBECONFIG
+              value: /mnt/workload/kubeconfig.yml
+            # Machines and MachineDeployments: this cluster
+            - name: CLUSTER_API_KUBECONFIG
+              value: /etc/karpenter/mgmt/kubeconfig
+            # running outside the cluster it manages: the lease lives in the workload cluster
+            - name: LEADER_ELECTION_NAMESPACE
+              value: kube-system
+            - name: SYSTEM_NAMESPACE
+              value: kube-system
+            - name: LOG_LEVEL
+              value: info
+            - name: HEALTH_PROBE_PORT
+              value: "8081"
+            - name: METRICS_PORT
+              value: "8080"
+          ports:
+            - name: http-metrics
+              containerPort: 8080
+            - name: http-health
+              containerPort: 8081
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http-health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http-health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: workload-kubeconfig
+              mountPath: /mnt/workload
+              readOnly: true
+            - name: mgmt-kubeconfig
+              mountPath: /etc/karpenter/mgmt
+              readOnly: true
+      volumes:
+        - name: workload-kubeconfig
+          secret:
+            secretName: dreem-mmiracapillo-cluster-kubeconfig
+            items:
+              - key: value
+                path: kubeconfig.yml
+        - name: mgmt-kubeconfig
+          configMap:
+            name: karpenter-mgmt-kubeconfig
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule

@@ -1,0 +1,16 @@
+[Unit]
+Description=Recreate metal3-dev-env provisioning bridge and ironicendpoint veth
+Documentation=https://github.com/metal3-io/metal3-dev-env
+After=network-pre.target
+Wants=network-pre.target
+# libvirt's "provisioning" network is forward mode=bridge and expects this
+# bridge to already exist, so it must be created before libvirtd starts.
+Before=libvirtd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/metal3-provisioning-net.sh
+
+[Install]
+WantedBy=multi-user.target

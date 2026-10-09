@@ -1,0 +1,49 @@
+diff --git a/02_configure_host.sh b/02_configure_host.sh
+index cbe6489..74323ff 100755
+--- a/02_configure_host.sh
++++ b/02_configure_host.sh
+@@ -81,7 +81,8 @@ fi
+ configure_minikube()
+ {
+     minikube config set driver kvm2
+-    minikube config set memory 4096
++    minikube config set memory 8192
++    minikube config set cpus 8
+ }
+ 
+ #
+diff --git a/config_example.sh b/config_example.sh
+old mode 100644
+new mode 100755
+diff --git a/disable_apparmor_driver_libvirtd.sh b/disable_apparmor_driver_libvirtd.sh
+old mode 100644
+new mode 100755
+diff --git a/tests/roles/run_tests/templates/main/metal3datatemplate-template.yaml b/tests/roles/run_tests/templates/main/metal3datatemplate-template.yaml
+index 3dc90ac..2f60b9d 100644
+--- a/tests/roles/run_tests/templates/main/metal3datatemplate-template.yaml
++++ b/tests/roles/run_tests/templates/main/metal3datatemplate-template.yaml
+@@ -63,7 +63,8 @@ spec:
+     services:
+       dns:
+ {% if IP_STACK == 'v4' or IP_STACK == 'v4v6' %}
+-        - 8.8.8.8
++        - 130.192.3.21
++        - 130.192.3.24
+ {% endif %}
+ {% if IP_STACK == 'v6' or IP_STACK == 'v4v6' %}
+         - 2001:4860:4860::8888
+diff --git a/vm-setup/roles/common/defaults/main.yml b/vm-setup/roles/common/defaults/main.yml
+index f75480f..682c8b7 100644
+--- a/vm-setup/roles/common/defaults/main.yml
++++ b/vm-setup/roles/common/defaults/main.yml
+@@ -9,8 +9,8 @@ libvirt_nic_model: virtio
+ # These defaults are used if there are no flavor-specific
+ # overrides configured.
+ default_disk: 50
+-default_memory: 4096
+-default_vcpu: 2
++default_memory: 32768
++default_vcpu: 10
+ num_nodes: 2
+ extradisks: false
+ tpm_emulator: "{{ lookup('env', 'VM_TPM_EMULATOR')|default(false, true) }}"

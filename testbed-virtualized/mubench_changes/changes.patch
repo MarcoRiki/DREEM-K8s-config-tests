@@ -1,0 +1,652 @@
+diff --git a/Add-on/HPA/hpa-template.yaml b/Add-on/HPA/hpa-template.yaml
+index 5359f79..f595efb 100644
+--- a/Add-on/HPA/hpa-template.yaml
++++ b/Add-on/HPA/hpa-template.yaml
+@@ -5,12 +5,25 @@ spec:
+   scaleTargetRef:
+     apiVersion: apps/v1
+     kind: Deployment
+-  minReplicas: 1
+-  maxReplicas: 10
++  minReplicas: 2
++  maxReplicas: 9
++  behavior:
++    scaleUp:
++      policies:
++      - type: Pods
++        value: 1
++        periodSeconds: 60
++      stabilizationWindowSeconds: 60
++    scaleDown:
++      policies:
++      - type: Pods
++        value: 1
++        periodSeconds: 60
++      stabilizationWindowSeconds: 60
+   metrics:
+   - type: Resource
+     resource:
+       name: cpu
+       target:
+         type: Utilization
+-        averageUtilization: 60
+\ No newline at end of file
++        averageUtilization: 70
+\ No newline at end of file
+diff --git a/Benchmarks/Runner/Runner.py b/Benchmarks/Runner/Runner.py
+index 3502406..d989297 100644
+--- a/Benchmarks/Runner/Runner.py
++++ b/Benchmarks/Runner/Runner.py
+@@ -325,8 +325,8 @@ else:
+             file_runner(workload_var)
+             print("***************************************")
+         if cnt != len(workloads) - 1:
+-            print("Sleep for 100 sec to allow completion of previus requests")
+-            time.sleep(100)
++            print("Sleep for 10 sec to allow completion of previus requests")
++            time.sleep(10)
+         with open(f"{output_path}/{result_file}_{workload_var.split('/')[-1].split('.')[0]}.txt", "w") as f:
+             f.writelines("\n".join(stats))
+  
+diff --git a/Benchmarks/TrafficGenerator/TrafficGenerator.py b/Benchmarks/TrafficGenerator/TrafficGenerator.py
+index 61c93c4..bd538b9 100644
+--- a/Benchmarks/TrafficGenerator/TrafficGenerator.py
++++ b/Benchmarks/TrafficGenerator/TrafficGenerator.py
+@@ -4,13 +4,14 @@ import os
+ Traffic_PATH = os.path.dirname(os.path.abspath(__file__))
+ 
+ def get_Traffic(Traffic_params):
+-    ingress_service = Traffic_params["ingress_service"]
++    list_ingress = list(Traffic_params["ingress_service"])
+     request_params = Traffic_params["request_parameters"]
+     Traffic_l = list()
+     events_cnt = 0
+     time = 0
+ 
+     while events_cnt < request_params["stop_event"]:
++        ingress_service = random.choice(list_ingress)
+         Traffic_l.append({"time": time, "service": ingress_service})
+         next_event = round(random.expovariate(1 / request_params["mean_interarrival_time"]))  # Gli interarrivi sono exp neg, il tempo in millisecondi
+         time += next_event
+diff --git a/Configs/K8sParameters.json b/Configs/K8sParameters.json
+index c7f1fee..a7c4dd8 100644
+--- a/Configs/K8sParameters.json
++++ b/Configs/K8sParameters.json
+@@ -2,10 +2,10 @@
+    "K8sParameters": {
+       "prefix_yaml_file":"mubench",
+       "namespace": "default",
+-      "image": "msvcbench/microservice:latest",
++      "image": "harbor.crownlabs.polito.it/cloud-sandbox/s324163/mubenchcustom/microservice-screen:latest",
+       "cluster_domain": "cluster",
+       "path": "/api/v1",
+-      "dns-resolver":"coredns.kube-system.svc.cluster.local",
++      "dns-resolver":"kube-dns.kube-system.svc.cluster.local",
+       "scheduler-name": "default-scheduler",
+       "sleep": 0,
+       "nginx-gw": true,
+@@ -14,5 +14,5 @@
+    },
+    "InternalServiceFilePath": "CustomFunctions",
+    "OutputPath": "SimulationWorkspace",
+-   "WorkModelPath": "Examples/workmodel-serial-10services.json"
++   "WorkModelPath": "SimulationWorkspace/workmodel.json"
+ }
+diff --git a/Configs/RunnerParameters.json b/Configs/RunnerParameters.json
+index f7262b6..2c79a66 100644
+--- a/Configs/RunnerParameters.json
++++ b/Configs/RunnerParameters.json
+@@ -1,11 +1,11 @@
+ {
+    "RunnerParameters":{
+-      "ms_access_gateway": "http://192.168.49.2:31113",
+-      "workload_files_path_list": ["SimulationWorkspace/workload.json"],
++      "ms_access_gateway": "http://192.168.111.100:31113",
++      "workload_files_path_list": [ "SimulationWorkspace/workload-0.json", "SimulationWorkspace/workload-1.json", "SimulationWorkspace/workload-2.json", "SimulationWorkspace/workload-3.json", "SimulationWorkspace/workload-4.json", "SimulationWorkspace/workload-5.json", "SimulationWorkspace/workload-4d.json", "SimulationWorkspace/workload-3d.json", "SimulationWorkspace/workload-2d.json", "SimulationWorkspace/workload-1d.json", "SimulationWorkspace/workload-0d.json" ],
+       "workload_rounds": 1,
+-      "workload_type": "greedy",
+-      "workload_events": 5000,
+-      "thread_pool_size": 4,
++      "workload_type": "file",
++      "workload_events": 2500,
++      "thread_pool_size": 500,
+       "result_file": "result"
+    },
+    "OutputPath": "SimulationWorkspace/Result",
+diff --git a/Configs/WorkModelParameters.json b/Configs/WorkModelParameters.json
+index 5e0934a..7edf55a 100644
+--- a/Configs/WorkModelParameters.json
++++ b/Configs/WorkModelParameters.json
+@@ -1,99 +1,98 @@
+ {
+    "WorkModelParameters":{
+-      "f0":{
+-         "type": "function",
++      "f1": {
++         "type":"function",
+          "value": {
+-            "name": "compute_pi",
++            "name": "run_stress_ng",
+             "recipient": "service",
+-            "probability":0,
++            "probability":0.25,
+             "parameters": {
+-               "mean_response_size":10,
+-               "range_complexity":[50, 100]
++               "n_cpu": 2,
++               "cpu_ops": 5000,
++               "fixed": true
+             },
+             "workers":4,
+-            "threads":16,
+-            "cpu-requests": "1000m",
+-            "cpu-limits": "1000m"
++            "threads":64,
++            "cpu-requests": "2500m",
++            "pod_antiaffinity": true,
++            "replicas": 2,
++            "taints": "small"
++
+          }
+       },
+-      "f1": {
++      "f2": {
+          "type":"function",
+-         "value":{
+-            "name": "colosseum",
++         "value": {
++            "name": "run_stress_ng",
+             "recipient": "service",
+-            "probability": 0.0,
+-            "parameters":{},
++            "probability":0.25,
++            "parameters": {
++               "n_cpu": 5,
++               "cpu_ops": 10000,
++               "fixed": true
++            },
+             "workers":4,
+-            "threads":16,
+-            "cpu-requests": "1000m",
+-            "cpu-limits": "1000m"
++            "threads":128,
++            "cpu-requests": "5000m",
++            "pod_antiaffinity": true,
++            "replicas": 2,
++            "taints": "big"
+          }
+       },
+-      "f2": {
++      "f3": {
+          "type":"function",
+          "value": {
+-            "name": "loader",
+-            "recipient": "database",
+-            "probability":1,
++            "name": "run_stress_ng",
++            "recipient": "service",
++            "probability":0.25,
+             "parameters": {
+-               "cpu_stress": {"run":false,"range_complexity": [100, 100], "thread_pool_size": 1, "trials": 1},
+-               "memory_stress":{"run":false, "memory_size": 10000, "memory_io": 1000},
+-               "disk_stress":{"run":true,"tmp_file_name":  "mubtestfile.txt", "disk_write_block_count": 1000, "disk_write_block_size": 1024},
+-               "sleep_stress":{"run":false, "sleep_time":  0.01},
+-               "mean_response_size": 11
++               "n_cpu": 2,
++               "cpu_ops": 5000,
++               "fixed": true
+             },
+             "workers":4,
+-            "threads":16,
+-            "cpu-requests": "1000m",
+-            "cpu-limits": "1000m"
++            "threads":64,
++            "cpu-requests": "2000m",
++            "pod_antiaffinity": true,
++            "replicas": 2,
++            "taints": "small"
+          }
+       },
+-      "f3": {
++      "f4": {
+          "type":"function",
+          "value": {
+-            "name": "loader",
++            "name": "run_stress_ng",
+             "recipient": "service",
+-            "probability":1,
++            "probability":0.25,
+             "parameters": {
+-               "cpu_stress": {"run":true,"range_complexity": [1000, 1000], "thread_pool_size": 1, "trials": 1},
+-               "memory_stress":{"run":false, "memory_size": 10000, "memory_io": 1000},
+-               "disk_stress":{"run":false,"tmp_file_name":  "mubtestfile.txt", "disk_write_block_count": 1000, "disk_write_block_size": 1024},
+-               "sleep_stress":{"run":false, "sleep_time":  0.01},
+-               "mean_response_size": 11
++               "n_cpu": 4,
++               "cpu_ops": 10000,
++               "fixed": true
+             },
+             "workers":4,
+-            "threads":16,
+-            "cpu-requests": "1000m",
+-            "cpu-limits": "1000m",
+-            "replicas": 2
++            "threads":128,
++            "cpu-requests": "3000m",
++            "pod_antiaffinity": true,
++            "taints": "big",
++            "replicas": 3
+          }
+       },
++      
+       "request_method":{
+          "type": "metadata",
+-         "value":"rest"
++         "value":"grpc"
+       },
+       "databases_prefix": {
+          "type":"metadata",
+          "value": "sdb"
+       },
+-      "override": {
+-         "type": "metadata",
+-         "value": {
+-            "sdb1": {"sidecar": "mongo:4.4.9"},
+-            "s0": {"function_id": "f1"}
+-         }
+-      },
+       "ServiceGraphFilePath": {
+-         "type": "metadata", 
+-         "value":"SimulationWorkspace/servicegraph.json"
++         "type": "metadata",
++         "value":"Examples/Alibaba/traces-mbench/par/app24/service_graph.json"
+       },
+       "OutputPath": {
+          "type":"metadata",
+          "value":"SimulationWorkspace"
+-      },
+-      "OutputFile": {
+-         "type":"metadata",
+-         "value":"workmodel.json"
+       }
+    }
+ }
+\ No newline at end of file
+diff --git a/Deployers/K8sDeployer/K8sYamlBuilder.py b/Deployers/K8sDeployer/K8sYamlBuilder.py
+index 30c363c..ff6ad1c 100644
+--- a/Deployers/K8sDeployer/K8sYamlBuilder.py
++++ b/Deployers/K8sDeployer/K8sYamlBuilder.py
+@@ -2,13 +2,35 @@ import json
+ import os
+ import yaml
+ from pprint import pprint
+-
++from copy import deepcopy
++import random
+ 
+ K8s_YAML_BUILDER_PATH = os.path.dirname(os.path.abspath(__file__))
+ 
+ SIDECAR_TEMPLATE = "- name: %s-sidecar\n          image: %s"
+ NODE_AFFINITY_TEMPLATE = {'affinity': {'nodeAffinity': {'requiredDuringSchedulingIgnoredDuringExecution': {'nodeSelectorTerms': [{'matchExpressions': [{'key': 'kubernetes.io/hostname','operator': 'In','values': ['']}]}]}}}}
+ POD_ANTIAFFINITI_TEMPLATE = {'affinity':{'podAntiAffinity':{'requiredDuringSchedulingIgnoredDuringExecution':[{'labelSelector':{'matchExpressions':[{'key':'app','operator':'In','values':['']}]},'topologyKey':'kubernetes.io/hostname'}]}}}
++TOPOLOGY_SPREAD_TEMPLATE = {'topologySpreadConstraints': [{'maxSkew': 1, 'topologyKey': 'kubernetes.io/hostname', 'whenUnsatisfiable': 'ScheduleAnyway', 'labelSelector': {'matchLabels': {'app': ''}}}]}
++PREFERRED_NODE_AFFINITY_TEMPLATE = {
++    'affinity': {
++        'nodeAffinity': {
++            'preferredDuringSchedulingIgnoredDuringExecution': [
++                {
++                    'weight': 100,
++                    'preference': {
++                        'matchExpressions': [
++                            {
++                                'key': 'size',
++                                'operator': 'In',
++                                'values': [] # Popolato dinamicamente con ['small'] o ['big']
++                            }
++                        ]
++                    }
++                }
++            ]
++        }
++    }
++}
+ 
+ # Override work_model params with those in k8s_parameters
+ def customization_work_model(workmodel, k8s_parameters):
+@@ -41,80 +63,169 @@ def customization_work_model(workmodel, k8s_parameters):
+ 
+ def create_deployment_service_yaml_files(workmodel, k8s_parameters, nfs, output_path):
+     namespace = k8s_parameters['namespace']
+-    counter=0
++    counter = 0
+     for service in workmodel:
+-        counter=counter+1
++        counter += 1
+ 
+-        # Create Deployment yamls
++        # 1. Carichiamo il file di template direttamente come DIZIONARIO Python
+         with open(f"{K8s_YAML_BUILDER_PATH}/Templates/DeploymentTemplate.yaml", "r") as file:
+-            f = file.read()
+-            f = f.replace("{{SERVICE_NAME}}", service)
+-            f = f.replace("{{IMAGE}}", workmodel[service]["image"])
+-            f = f.replace("{{NAMESPACE}}", namespace)
+-            if "scheduler-name" in workmodel[service].keys():
+-                f = f.replace("{{SCHEDULER_NAME}}", str(workmodel[service]["scheduler-name"]))
+-            else:
+-                f = f.replace("{{SCHEDULER_NAME}}", "default-scheduler")
+-            if "sidecar" in workmodel[service].keys():
+-                f = f.replace("{{SIDECAR}}", SIDECAR_TEMPLATE % (service, workmodel[service]["sidecar"]))
+-            else:
+-                f = f.replace("{{SIDECAR}}", "".rstrip())
+-            if "replicas" in workmodel[service].keys():
+-                f = f.replace("{{REPLICAS}}", str(workmodel[service]["replicas"]))
+-            else:
+-                f = f.replace("{{REPLICAS}}", "1")
+-            if "node_affinity" in workmodel[service].keys():
+-                NODE_AFFINITY_TEMPLATE_TO_ADD = NODE_AFFINITY_TEMPLATE
+-                NODE_AFFINITY_TEMPLATE_TO_ADD['affinity']['nodeAffinity']['requiredDuringSchedulingIgnoredDuringExecution']['nodeSelectorTerms'][0]['matchExpressions'][0].update({"values" : workmodel[service]["node_affinity"]})
+-                f = f.replace("{{NODE_AFFINITY}}", str(yaml.dump(NODE_AFFINITY_TEMPLATE_TO_ADD)).rstrip().replace('\n','\n   '))
+-            else:
+-                f = f.replace("{{NODE_AFFINITY}}", "")
+-            if "pod_antiaffinity" in workmodel[service].keys() and workmodel[service]['pod_antiaffinity']==True:
+-                POD_ANTIAFFINITY_TO_ADD = POD_ANTIAFFINITI_TEMPLATE
+-                POD_ANTIAFFINITY_TO_ADD['affinity']['podAntiAffinity']['requiredDuringSchedulingIgnoredDuringExecution'][0]['labelSelector']['matchExpressions'][0]['values'][0] = service
+-                POD_ANTIAFFINITY_TO_ADD = str(yaml.dump(POD_ANTIAFFINITY_TO_ADD)).replace('\n','\n        ').rstrip()
+-                f = f.replace("{{POD_ANTIAFFINITY}}", POD_ANTIAFFINITY_TO_ADD)
+-            else:
+-                f = f.replace("{{POD_ANTIAFFINITY}}", "".rstrip())
+-            if "workers" in workmodel[service].keys():
+-                f = f.replace("{{PN}}", f'\'{workmodel[service]["workers"]}\'')
+-            else:
+-                f = f.replace("{{PN}}", "\'1\'") 
+-            if "threads" in workmodel[service].keys():
+-                f = f.replace("{{TN}}", f'\'{workmodel[service]["threads"]}\'')
+-            else:
+-                f = f.replace("{{TN}}", "\'4\'")
++            # NOTA: Poiché il template ha dei tag orfani come {{NODE_AFFINITY}} o {{RESOURCES}}, 
++            # leggiamolo come stringa, rimuoviamo temporaneamente i tag inutilizzati per non far crashare il parser,
++            # oppure facciamo i replace testuali SEMPLICI prima di darlo a YAML.
++            template_content = file.read()
++            
++        # Sostituzioni testuali base semplici (stringa -> stringa)
++        template_content = template_content.replace("{{SERVICE_NAME}}", service)
++        template_content = template_content.replace("{{IMAGE}}", workmodel[service]["image"])
++        template_content = template_content.replace("{{NAMESPACE}}", namespace)
++        
++        if "scheduler-name" in workmodel[service].keys():
++            template_content = template_content.replace("{{SCHEDULER_NAME}}", str(workmodel[service]["scheduler-name"]))
++        else:
++            template_content = template_content.replace("{{SCHEDULER_NAME}}", "default-scheduler")
++            
++        if "replicas" in workmodel[service].keys():
++            template_content = template_content.replace("{{REPLICAS}}", str(workmodel[service]["replicas"]))
++        else:
++            template_content = template_content.replace("{{REPLICAS}}", "1")
++
++        # Rimuoviamo i tag complessi dal testo prima del caricamento per non corrompere la sintassi YAML
++        # Li gestiremo nativamente come oggetti Python strutturati
++        template_content = template_content.replace("{{NODE_AFFINITY}}", "")
++        template_content = template_content.replace("{{POD_ANTIAFFINITY}}", "")
++        template_content = template_content.replace("{{TOPOLOGY_SPREAD}}", "")
++        template_content = template_content.replace("{{SIDECAR}}", "")
++        template_content = template_content.replace("{{RESOURCES}}", "{}") # Fallback sicuro
++        template_content = template_content.replace("{{PN}}", f"'{workmodel[service].get('workers', 1)}'")
++        template_content = template_content.replace("{{TN}}", f"'{workmodel[service].get('threads', 4)}'")
++
++        # 2. Convertiamo la struttura pulita in un dizionario Python
++        deployment_dict = yaml.safe_load(template_content)
++
++        # Scorciatoia per arrivare allo spec del Pod all'interno dell'oggetto Deployment
++        pod_spec = deployment_dict['spec']['template']['spec']
++
++        # 3. Gestione Nativa Python delle Risorse (Resources)
++        if len(set(workmodel[service].keys()).intersection({"cpu-limits", "memory-limits", "cpu-requests", "memory-requests"})):
++            resources = {}
++            if "cpu-requests" in workmodel[service] or "memory-requests" in workmodel[service]:
++                resources["requests"] = {}
++                if "cpu-requests" in workmodel[service]: resources["requests"]["cpu"] = workmodel[service]["cpu-requests"]
++                if "memory-requests" in workmodel[service]: resources["requests"]["memory"] = workmodel[service]["memory-requests"]
++            if "cpu-limits" in workmodel[service] or "memory-limits" in workmodel[service]:
++                resources["limits"] = {}
++                if "cpu-limits" in workmodel[service]: resources["limits"]["cpu"] = workmodel[service]["cpu-limits"]
++                if "memory-limits" in workmodel[service]: resources["limits"]["memory"] = workmodel[service]["memory-limits"]
++            pod_spec['containers'][0]['resources'] = resources
++
++        # 4. Iniezione Nativa della Preferred Node Affinity
++        if "preferred_node_size" in workmodel[service].keys():
++                size_value = workmodel[service]["preferred_node_size"]
++                pod_spec['affinity'] = {
++                    'nodeAffinity': {
++                        'preferredDuringSchedulingIgnoredDuringExecution': [
++                            {
++                                'weight': random.randint(75, 100),  # Peso casuale tra 1 e 100
++                                'preference': {
++                                    'matchExpressions': [{'key': 'size', 'operator': 'In', 'values': [size_value]}]
++                                }
++                            }
++                        ]
++                    }
++                }
++        elif "preferred_group" in workmodel[service].keys():
++            group_prefs = workmodel[service]["preferred_group"]   # {"A": 100, "B": 40}
++            if 'affinity' not in pod_spec:
++                pod_spec['affinity'] = {}
++            pod_spec['affinity']['nodeAffinity'] = {
++                'preferredDuringSchedulingIgnoredDuringExecution': [
++                    {'weight': w, 'preference': {'matchExpressions':
++                        [{'key': 'group', 'operator': 'In', 'values': [g]}]}}
++                    for g, w in group_prefs.items()
++                ]
++            }
++
+             
+-            rank_string='' # ranck string is used to order the yaml file as a funciont of the cpu-requests 
+-            if  len(set(workmodel[service].keys()).intersection({"cpu-limits","memory-limits","cpu-requests","memory-requests"})):
+-                s=""
+-                if "cpu-requests" in workmodel[service].keys() or "memory-requests" in workmodel[service].keys():
+-                    s = s + "\n            requests:"
+-                    if "cpu-requests" in workmodel[service].keys():
+-                        s = s + "\n              cpu: " + workmodel[service]["cpu-requests"]
+-                        if 'm' in workmodel[service]["cpu-requests"]:
+-                            rank_string=str(int(workmodel[service]["cpu-requests"].replace('m',''))).zfill(5)
+-                        else:
+-                            rank_string=str(int(float(workmodel[service]["cpu-requests"])*1000)).zfill(5)
+-                    if "memory-requests" in workmodel[service].keys():
+-                        s = s + "\n              memory: " + workmodel[service]["memory-requests"]
+-                if "cpu-limits" in workmodel[service].keys() or "memory-limits" in workmodel[service].keys():
+-                    s = s + "\n            limits:"
+-                    if "cpu-limits" in workmodel[service].keys():
+-                        s = s + "\n              cpu: " + workmodel[service]["cpu-limits"]
+-                    if "memory-limits" in workmodel[service].keys():
+-                        s = s + "\n              memory: " + workmodel[service]["memory-limits"]
+-                f = f.replace("{{RESOURCES}}", s)
++        elif "required_node_labels" in workmodel[service].keys():
++            # hard placement on nodes carrying every given label, e.g. {"size": ["big"]}
++            if 'affinity' not in pod_spec:
++                pod_spec['affinity'] = {}
++            pod_spec['affinity']['nodeAffinity'] = {
++                'requiredDuringSchedulingIgnoredDuringExecution': {
++                    'nodeSelectorTerms': [{'matchExpressions': [
++                        {'key': key, 'operator': 'In', 'values': values if isinstance(values, list) else [values]}
++                        for key, values in workmodel[service]["required_node_labels"].items()
++                    ]}]
++                }
++            }
++
++        elif "node_affinity" in workmodel[service].keys():
++            pod_spec['affinity'] = {
++                'nodeAffinity': {
++                    'requiredDuringSchedulingIgnoredDuringExecution': {
++                        'nodeSelectorTerms': [{'matchExpressions': [{'key': 'kubernetes.io/hostname', 'operator': 'In', 'values': workmodel[service]["node_affinity"]}]}]
++                    }
++                }
++            }
++
++        # 4b. Preferred inter-pod affinity, e.g. {"aa": 100}: prefer the node already
++        #     running a pod of each named service (same node, hostname topology)
++        if "preferred_pod_affinity" in workmodel[service].keys():
++            if 'affinity' not in pod_spec:
++                pod_spec['affinity'] = {}
++            pod_spec['affinity']['podAffinity'] = {
++                'preferredDuringSchedulingIgnoredDuringExecution': [
++                    {'weight': int(weight), 'podAffinityTerm': {
++                        'labelSelector': {'matchLabels': {'app': target}},
++                        'topologyKey': 'kubernetes.io/hostname'}}
++                    for target, weight in workmodel[service]["preferred_pod_affinity"].items()
++                ]
++            }
++
++        # 5. Iniezione Nativa della Topology Spread / AntiAffinity
++        if "pod_topology_spread" in workmodel[service].keys() and workmodel[service]['pod_topology_spread'] == True:
++            max_skew = workmodel[service].get('max_skew', 1)
++            pod_spec['topologySpreadConstraints'] = [{
++                'maxSkew': max_skew,
++                'topologyKey': 'kubernetes.io/hostname',
++                'whenUnsatisfiable': 'ScheduleAnyway',
++                'labelSelector': {'matchLabels': {'app': service}}
++            }]
++        elif "pod_antiaffinity" in workmodel[service].keys() and workmodel[service]['pod_antiaffinity'] == True:
++            # Se esiste già un blocco affinity (creato sopra dalla node affinity), facciamo l'update
++            if 'affinity' not in pod_spec:
++                pod_spec['affinity'] = {}
++            pod_spec['affinity']['podAntiAffinity'] = {
++                'requiredDuringSchedulingIgnoredDuringExecution': [{
++                    'labelSelector': {'matchExpressions': [{'key': 'app', 'operator': 'In', 'values': [service]}]},
++                    'topologyKey': 'kubernetes.io/hostname'
++                }]
++            }
++
++        # 6. Gestione Sidecar
++        if "sidecar" in workmodel[service].keys():
++            pod_spec['containers'].append({
++                'name': f"{service}-sidecar",
++                'image': workmodel[service]["sidecar"]
++            })
++
++        # Calcolo del rank string per il nome del file
++        rank_string = '00000'
++        if "cpu-requests" in workmodel[service].keys():
++            if 'm' in workmodel[service]["cpu-requests"]:
++                rank_string = str(int(workmodel[service]["cpu-requests"].replace('m', ''))).zfill(5)
+             else:
+-                f= f.replace("{{RESOURCES}}", "{}")
++                rank_string = str(int(float(workmodel[service]["cpu-requests"]) * 1000)).zfill(5)
++
+         if not os.path.exists(f"{output_path}/yamls"):
+             os.makedirs(f"{output_path}/yamls")
+-        
+-        # rank used to sort the deployment so as more demanding PODs are deployed first
+-        with open(f"{output_path}/yamls/{k8s_parameters['prefix_yaml_file']}-{str(rank_string).zfill(3)}-Deployment-{service}.yaml", "w") as file:
+-            file.write(f)
+-        
+-        # Create Service yamls
++
++        # 7. SCRITTURA FINALE: Ci pensa PyYAML a fare il dump perfetto senza errori di spazi!
++        filepath = f"{output_path}/yamls/{k8s_parameters['prefix_yaml_file']}-{str(rank_string).zfill(3)}-Deployment-{service}.yaml"
++        with open(filepath, "w") as file:
++            yaml.dump(deployment_dict, file, default_flow_style=False, sort_keys=False)
++
++         # Create Service yamls
+         with open(f"{K8s_YAML_BUILDER_PATH}/Templates/ServiceTemplate.yaml", "r") as file:
+             f = file.read()
+             f = f.replace("{{SERVICE_NAME}}", service)
+@@ -145,7 +256,6 @@ def create_deployment_service_yaml_files(workmodel, k8s_parameters, nfs, output_
+         with open(f"{output_path}/yamls/{k8s_parameters['prefix_yaml_file']}-DeploymentNginxGw.yaml", "w") as file:
+             file.write(f)
+     print("Deployments and Services Created!")
+-
+ def create_workmodel_configmap_yaml_file(workmodel, k8s_parameters, nfs, output_path):
+     namespace = k8s_parameters['namespace']
+     with open(f"{K8s_YAML_BUILDER_PATH}/Templates/ConfigMapWorkmodelTemplate.yaml", "r") as file:
+diff --git a/Deployers/K8sDeployer/Templates/DeploymentNginxGwTemplate.yaml b/Deployers/K8sDeployer/Templates/DeploymentNginxGwTemplate.yaml
+index 5094dee..da72ed3 100644
+--- a/Deployers/K8sDeployer/Templates/DeploymentNginxGwTemplate.yaml
++++ b/Deployers/K8sDeployer/Templates/DeploymentNginxGwTemplate.yaml
+@@ -17,6 +17,17 @@ spec:
+         app: gw-nginx
+         version: "1.0"
+     spec:
++      nodeSelector:
++        node-role.kubernetes.io/control-plane: ""
++
++      # 2. TOLLERA il blocco di sicurezza (Taint) del control-plane
++      tolerations:
++        - key: "node-role.kubernetes.io/control-plane"
++          operator: "Exists"
++          effect: "NoSchedule"
++
++      imagePullSecrets:
++      - name: regcred
+       containers:
+       - name: gw-nginx
+         image: nginx
+diff --git a/Deployers/K8sDeployer/Templates/DeploymentTemplate.yaml b/Deployers/K8sDeployer/Templates/DeploymentTemplate.yaml
+index 819d7dd..3e938cf 100644
+--- a/Deployers/K8sDeployer/Templates/DeploymentTemplate.yaml
++++ b/Deployers/K8sDeployer/Templates/DeploymentTemplate.yaml
+@@ -1,4 +1,4 @@
+-apiVersion: apps/v1 # for versions before 1.9.0 use apps/v1beta2
++apiVersion: apps/v1
+ kind: Deployment
+ metadata:
+   name: {{SERVICE_NAME}}
+@@ -14,7 +14,6 @@ spec:
+     matchLabels:
+       app: {{SERVICE_NAME}}
+   replicas: {{REPLICAS}}
+-  {{NODE_AFFINITY}}
+   template:
+     metadata:
+       labels:
+@@ -26,8 +25,14 @@ spec:
+         prometheus.io/scrape: 'true'
+         prometheus.io/port: '8080'
+     spec:
+-      terminationGracePeriodSeconds : 3
++      terminationGracePeriodSeconds : 30
+       schedulerName: {{SCHEDULER_NAME}}
++      
++      # Tutti i tag di affinità e vincoli devono stare qui dentro (con 6 spazi)
++      {{NODE_AFFINITY}}
++      {{POD_ANTIAFFINITY}}
++      {{TOPOLOGY_SPREAD}}
++
+       containers:
+         - name: {{SERVICE_NAME}}
+           image: {{IMAGE}}
+@@ -60,8 +65,7 @@ spec:
+         
+         {{SIDECAR}}
+ 
+-      {{POD_ANTIAFFINITY}}
+-
++      # Spostiamo volumes qui sotto, assicurandoti che abbia ESATTAMENTE 6 spazi di rientro
+       volumes:
+         - name: podinfo
+           downwardAPI:
+@@ -77,4 +81,4 @@ spec:
+             name: workmodel
+         - name: microservice-internal-services
+           configMap:
+-            name: internal-services
++            name: internal-services
+\ No newline at end of file
+diff --git a/Monitoring/kubernetes-full-monitoring/monitoring-install.sh b/Monitoring/kubernetes-full-monitoring/monitoring-install.sh
+old mode 100644
+new mode 100755
+diff --git a/requirements.txt b/requirements.txt
+index f7042a1..c6abf93 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -14,7 +14,7 @@ pyasn1-modules==0.2.8
+ pycparser==2.20
+ python-dateutil==2.8.2
+ python-igraph==0.9.6
+-PyYAML==5.4.1
++PyYAML>=6.0
+ requests==2.26.0
+ requests-oauthlib==1.3.0
+ rsa==4.7.2
+diff --git a/welcome.sh b/welcome.sh
+old mode 100644
+new mode 100755
