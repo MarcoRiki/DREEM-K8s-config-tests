@@ -1,12 +1,13 @@
 # muBench changes
 
 [muBench](https://github.com/mSvcBench/muBench) generates and deploys the microservice
-application and sends it the load. The experiments use it at a pinned commit with the
-changes below; `testbed/` expects the checkout at `<repo>/muBench`.
+application and sends it the load. The experiments used it at the commit below with the
+changes below; `testbed/` expects the checkout at `muBench/` one level above this
+repository (or wherever `MUBENCH` points).
 
 | Item | Value |
 |---|---|
-| Commit | `176c8f14f2740414436078d5dcd969d38dd4acd4` (main, 2025-06-12) |
+| Commit the experiments used | `176c8f14f2740414436078d5dcd969d38dd4acd4` (main, 2025-06-12); `apply-changes.sh` takes the latest commit unless `--pinned` |
 | Service image | `harbor.crownlabs.polito.it/cloud-sandbox/s324163/mubenchcustom/microservice-screen:latest` (muBench's service cell with `stress-ng`; pulled without credentials) |
 | Python | 3.12, packages in `requirements-venv.txt` (`.venv` in the muBench folder) |
 
@@ -14,7 +15,7 @@ changes below; `testbed/` expects the checkout at `<repo>/muBench`.
 
 | Path | What it is |
 |---|---|
-| `apply-changes.sh` | clones muBench at the pinned commit (if needed), copies `files/` over it, unzips the Alibaba traces, creates `.venv` |
+| `apply-changes.sh` | clones muBench one level above the repository (if needed), at the latest commit or with `--pinned` at the experiments' one, copies `files/` over it, unzips the Alibaba traces, creates `.venv` |
 | `files/` | the changed and added files, at their path in muBench |
 | `changes.patch` | the code and configuration changes as a diff, for review |
 | `requirements-venv.txt` | the package versions of the `.venv` the tests ran with (upstream `requirements.txt` pins versions that no longer install on Python 3.12) |
@@ -71,7 +72,8 @@ changes below; `testbed/` expects the checkout at `<repo>/muBench`.
 
 ```bash
 cd $REPO/mubench_changes
-./apply-changes.sh                                   # -> $REPO/muBench, with .venv
+./apply-changes.sh                                   # -> $UPSTREAM/muBench at the latest commit, with .venv
+# ./apply-changes.sh --pinned                        #    or at the experiments' commit (warns: may no longer work)
 monitoring/install-monitoring.sh                     # needs the workload cluster with Calico
 monitoring/import-dashboard.sh                       # µBench dashboard into Grafana
 ```

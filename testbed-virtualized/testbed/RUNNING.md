@@ -70,7 +70,8 @@ cd $REPO/testbed
 ./test_Karpenter.sh --rep=1 --anchors=big --latency=yes --delay=5ms   # Karpenter
 ```
 
-The Runner is started with `muBench/.venv/bin/python3`, the environment muBench
+The Runner is started with `$MUBENCH/.venv/bin/python3` (muBench is one level above
+the repository unless `MUBENCH` says otherwise), the environment muBench
 is installed into, so there is no need to activate it; set `PYTHON=...` to use
 another one.
 

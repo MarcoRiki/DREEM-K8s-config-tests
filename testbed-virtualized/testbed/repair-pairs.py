@@ -24,7 +24,7 @@ Usage:
 
 Options:
   --workmodel=PATH     where the probe -> anchor pairs come from
-                       (default: ../muBench/SimulationWorkspace/workmodel.json; a run's
+                       (default: $MUBENCH/SimulationWorkspace/workmodel.json; a run's
                        deploy/workmodel.json describes exactly what was deployed)
   --namespace=NS       application namespace (default: from muBench's K8sParameters.json)
   --max-per-pass=N     probes to move in one pass (default 1: one restart at a time)
@@ -46,8 +46,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_WORKMODEL = HERE.parent / "muBench" / "SimulationWorkspace" / "workmodel.json"
-K8S_PARAMETERS = HERE.parent / "muBench" / "Configs" / "K8sParameters.json"
+MUBENCH = Path(os.environ.get("MUBENCH", HERE.parents[2] / "muBench"))   # one level above the repository root
+DEFAULT_WORKMODEL = MUBENCH / "SimulationWorkspace" / "workmodel.json"
+K8S_PARAMETERS = MUBENCH / "Configs" / "K8sParameters.json"
 
 
 def log(message):

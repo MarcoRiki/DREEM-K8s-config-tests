@@ -1,4 +1,5 @@
-# upstream checkouts created by the apply-changes.sh scripts
+# upstream checkouts: apply-changes.sh now clones them one level above the repository;
+# these keep an older checkout made here out of git
 /metal3-dev-env/
 /muBench/
 

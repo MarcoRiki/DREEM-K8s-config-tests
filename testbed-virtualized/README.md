@@ -17,16 +17,31 @@ and a group per host. The application and its load come from
 
 | Folder | Contents |
 |---|---|
-| `metal3-dev-env_changes/` | the files changed in metal3-dev-env (VM and minikube sizes, node DNS for the PoliTO network), a script that applies them to a checkout at the pinned commit, the install variables (`env.sh`), the host's reboot fixes, and the workload cluster's base add-ons (Calico, metrics-server) |
-| `mubench_changes/` | the files changed or added in muBench (stress-ng function, deployer with node and pod affinities, HPA template, load generator), the work model and request traces the tests send, a script that applies them and unzips the Alibaba traces, the monitoring install and the Grafana dashboard |
+| `metal3-dev-env_changes/` | the files changed in metal3-dev-env (VM and minikube sizes, node DNS for the PoliTO network), a script that clones metal3-dev-env and applies them, the install variables (`env.sh`), the host's reboot fixes, and the workload cluster's base add-ons (Calico, metrics-server) |
+| `mubench_changes/` | the files changed or added in muBench (stress-ng function, deployer with node and pod affinities, HPA template, load generator), the work model and request traces the tests send, a script that clones muBench, applies them and unzips the Alibaba traces, the monitoring install and the Grafana dashboard |
 | `DREEM/` | the Helm values for DREEM (operator and forecaster), to be added; its README lists the names the tests rely on |
 | `CA/` | Cluster Autoscaler v1.29.0 (Cluster API provider): manifest and install instructions |
 | `Karpenter/` | Karpenter with its Cluster API provider: manifests, CRDs, the image build, a feasibility check and install instructions |
 | `testbed/` | the experiment: fleet profiles, workload deployment, emulated network latency, one script per compared configuration (`test.sh`, `test_CA.sh`, `test_Karpenter.sh`), metrics export and analysis; `RUNNING.md` is the manual |
 | `check_setup.sh` | checks, without changing anything, that everything is in place for the tests |
 
-The setup clones metal3-dev-env and muBench into `metal3-dev-env/` and `muBench/` next to
-these folders (git-ignored). `testbed/` expects muBench exactly there.
+The setup clones metal3-dev-env and muBench into `metal3-dev-env/` and `muBench/` one
+level above this repository, next to it rather than inside it:
+
+```
+<parent>/
+├── DREEM-K8s-config-tests/   this repository (testbed-virtualized/ is this folder)
+├── metal3-dev-env/
+└── muBench/
+```
+
+`testbed/` and `check_setup.sh` look for muBench there; set `MUBENCH=/path/to/muBench`
+(and `METAL3_DEV_ENV=...` for `check_setup.sh`) if you cloned them elsewhere.
+
+By default both are cloned at the latest commit of `main`. The experiments ran on the
+commits listed in [Pinned versions](#pinned-versions); `apply-changes.sh --pinned` checks
+those out instead, with a warning that an old commit may no longer work. On a newer
+commit the script warns if upstream changed one of the files it overwrites.
 
 ## Setup
 
@@ -37,13 +52,23 @@ metal3-dev-env installs jq, kubectl, minikube, libvirt and docker itself. Run ev
 from a shell where the repository path is set:
 
 ```bash
-export REPO=$(pwd)   # the root of this repository
+export REPO=$(pwd)                       # this folder, testbed-virtualized/
+export UPSTREAM=$(cd "$REPO/../.." && pwd)   # one level above the repository: metal3-dev-env/, muBench/
 ```
 
-1. **Get metal3-dev-env at the pinned commit and apply the changes.**
+The scripts are stored without the execute bit, so make them executable once after
+cloning:
+
+```bash
+find "$REPO" -name '*.sh' -exec chmod +x {} +   # every shell script
+chmod +x "$REPO"/testbed/*.py                    # export-metrics.py and the other testbed tools
+```
+
+1. **Get metal3-dev-env and apply the changes.**
 
    ```bash
-   $REPO/metal3-dev-env_changes/apply-changes.sh   # clones into $REPO/metal3-dev-env, copies the changed files
+   $REPO/metal3-dev-env_changes/apply-changes.sh            # latest commit into $UPSTREAM/metal3-dev-env, copies the changed files
+   $REPO/metal3-dev-env_changes/apply-changes.sh --pinned   # or: the commit the experiments used (may no longer work)
    ```
 
    Check the node DNS servers first: the changed data template uses the resolvers of
@@ -53,22 +78,24 @@ export REPO=$(pwd)   # the root of this repository
 
    ```bash
    source $REPO/metal3-dev-env_changes/env.sh      # 9 nodes, CentOS 10, Kubernetes v1.33.7, Redfish
-   cd $REPO/metal3-dev-env
-   ./01_prepare_host.sh && ./02_configure_host.sh && ./03_launch_mgmt_cluster.sh
-   ./tests/scripts/provision/cluster.sh
-   ./tests/scripts/provision/controlplane.sh
-   ./tests/scripts/provision/worker.sh
+   cd $UPSTREAM/metal3-dev-env
+   
+   sudo ufw disable
+
+   # follow the instructions in the metal3-dev-env repo (passwordless sudo, execute the four scripts, provision the machines)
+
    $REPO/metal3-dev-env_changes/workload-cluster/post-provision.sh   # ~/workload.kubeconfig, Calico, metrics-server
    ```
 
    Install the host's provisioning-bridge unit once, so the testbed survives a reboot
    (`metal3-dev-env_changes/README.md`, "Surviving a reboot").
 
-3. **Get muBench at the pinned commit and apply the changes.**
+3. **Get muBench and apply the changes.**
 
    ```bash
-   $REPO/mubench_changes/apply-changes.sh   # clones into $REPO/muBench, copies the changes,
+   $REPO/mubench_changes/apply-changes.sh   # latest commit into $UPSTREAM/muBench, copies the changes,
                                             # unzips traces-mbench.zip, creates .venv (~6 min)
+                                            # (--pinned: the commit the experiments used, may no longer work)
    ```
 
 4. **Install the monitoring stack and import the Grafana dashboard.**
@@ -124,14 +151,17 @@ analysis notebook.
 
 ## Pinned versions
 
+The versions the experiments ran on. metal3-dev-env and muBench are cloned at their
+latest commit unless `apply-changes.sh --pinned` is given (see above).
+
 | Component | Version |
 |---|---|
-| metal3-dev-env | `ac77fc9218022cf88be286f0c971dec10d7ea4a0` |
+| metal3-dev-env | `ac77fc9218022cf88be286f0c971dec10d7ea4a0` (main, 2026-08-12) |
 | Cluster API / clusterctl | v1.13.5 |
 | Kubernetes (nodes) | v1.33.7, CentOS 10 node image |
 | Calico | v3.26.1 |
 | metrics-server | v0.9.0 |
-| muBench | `176c8f14f2740414436078d5dcd969d38dd4acd4` |
+| muBench | `176c8f14f2740414436078d5dcd969d38dd4acd4` (main, 2025-06-12) |
 | kube-prometheus-stack | 89.2.2 (Prometheus operator v0.93.1, Grafana 13.2.1) |
 | Istio | 1.30.4; Kiali 2.31.0 |
 | Cluster Autoscaler | v1.29.0 |

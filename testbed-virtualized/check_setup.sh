@@ -2,8 +2,8 @@
 # Checks that everything the tests need is in place, without changing anything:
 #
 #   host            tools, passwordless sudo, libvirt VMs, provisioning bridge
-#   checkouts       metal3-dev-env and muBench at the pinned commits with the changes
-#                   applied, muBench's traces, inputs and .venv
+#   checkouts       metal3-dev-env and muBench (one level above the repository) with the
+#                   changes applied, their commit against the experiments' one, muBench's traces, inputs and .venv
 #   management      Cluster API / Metal3 / Ironic, BareMetalHosts, the worker
 #                   MachineDeployment (Cluster Autoscaler bounds, labels at join),
 #                   Cluster Autoscaler and Karpenter installed and switched off
@@ -18,7 +18,7 @@
 #
 # Usage: ./check_setup.sh
 # MGMT_KUBECONFIG (default ~/.kube/config), WORKLOAD_KUBECONFIG (default ~/workload.kubeconfig),
-# METAL3_DEV_ENV (default <repo>/metal3-dev-env).
+# METAL3_DEV_ENV, MUBENCH (default metal3-dev-env/ and muBench/ one level above the repository root).
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTBED="$REPO/testbed"
@@ -27,8 +27,9 @@ case "${1:-}" in -h|--help) awk 'NR > 1 && /^#/ {sub(/^# ?/, ""); print; next} N
 source "$TESTBED/lib.sh"   # mgmt, workload, cp_bmh, worker_bmhs, cp_node
 set +e                     # a failed check is reported, not fatal
 
-METAL3_DEV_ENV=${METAL3_DEV_ENV:-$REPO/metal3-dev-env}
-MUBENCH=$REPO/muBench
+UPSTREAM="$(cd "$REPO/../.." && pwd)"   # one level above the repository root: the upstream checkouts
+METAL3_DEV_ENV=${METAL3_DEV_ENV:-$UPSTREAM/metal3-dev-env}
+MUBENCH=${MUBENCH:-$UPSTREAM/muBench}
 MD_NAME=test-cluster-m3
 CLUSTER_NAME=test-cluster-m3
 PROFILES=$TESTBED/profiles.json
@@ -75,8 +76,8 @@ checkout() {   # name dir commit changes-dir
   local name=$1 dir=$2 commit=$3 changes=$4 head diff
   if [ ! -d "$dir/.git" ]; then fail "$name: no checkout at $dir (run $changes/apply-changes.sh)"; return 1; fi
   head=$(git -C "$dir" rev-parse HEAD)
-  if [ "$head" = "$commit" ]; then ok "$name at the pinned commit ${commit:0:10}"
-  else fail "$name at ${head:0:10}, pinned ${commit:0:10}"; fi
+  if [ "$head" = "$commit" ]; then ok "$name at the experiments' commit ${commit:0:10}"
+  else warn "$name at ${head:0:10}, the experiments used ${commit:0:10} (apply-changes.sh --pinned)"; fi
   if diff=$(same_files "$changes" "$dir"); then ok "$name: changes applied ($(cd "$changes/files" && find . -type f | wc -l) files)"
   else fail "$name: changes missing or different: $diff (run $changes/apply-changes.sh)"; fi
 }

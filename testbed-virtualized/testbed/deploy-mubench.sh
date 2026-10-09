@@ -16,7 +16,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
-MUBENCH="$(cd "$HERE/../muBench" && pwd)"
+MUBENCH="$(cd "${MUBENCH:-$HERE/../../../muBench}" && pwd)"   # one level above the repository root
 PYTHON=${PYTHON:-$MUBENCH/.venv/bin/python3}
 [ -x "$PYTHON" ] || PYTHON=python3
 

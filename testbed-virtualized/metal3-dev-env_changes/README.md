@@ -7,7 +7,7 @@ cluster provisioned on the VMs (1 control plane, 8 workers of 10 vCPU / 32 GB).
 
 | Item | Value |
 |---|---|
-| Commit | `ac77fc9218022cf88be286f0c971dec10d7ea4a0` (main, 2026-08-12) |
+| Commit the experiments used | `ac77fc9218022cf88be286f0c971dec10d7ea4a0` (main, 2026-08-12); `apply-changes.sh` takes the latest commit unless `--pinned` |
 | Host | Ubuntu 24.04, 96 CPUs, 503 GB RAM, passwordless `sudo` |
 | Tools on the host | kubectl v1.33.7, clusterctl v1.13.5, helm v4.2.4, minikube v1.37.0, jq, envsubst, docker, libvirt |
 
@@ -15,7 +15,7 @@ cluster provisioned on the VMs (1 control plane, 8 workers of 10 vCPU / 32 GB).
 
 | Path | What it is |
 |---|---|
-| `apply-changes.sh` | clones metal3-dev-env at the pinned commit (if needed) and copies `files/` over it |
+| `apply-changes.sh` | clones metal3-dev-env one level above the repository (if needed), at the latest commit or with `--pinned` at the experiments' one, and copies `files/` over it |
 | `files/` | the modified files, at their path in metal3-dev-env |
 | `changes.patch` | the same changes as a diff, for review |
 | `env.sh` | the variables the install ran with (9 nodes, CentOS 10 image, Kubernetes v1.33.7, Redfish, cluster `test-cluster-m3`) |
@@ -34,12 +34,13 @@ The changes (details in `apply-changes.sh`):
 
 ```bash
 cd $REPO/metal3-dev-env_changes
-./apply-changes.sh                       # -> $REPO/metal3-dev-env at the pinned commit
+./apply-changes.sh                       # -> $UPSTREAM/metal3-dev-env at the latest commit
+# ./apply-changes.sh --pinned            #    or at the experiments' commit (warns: may no longer work)
 source ./env.sh
 
 sudo ufw disable                        # -> disabling firewall, it may block part of the installation
 
-cd $REPO/metal3-dev-env
+cd $UPSTREAM/metal3-dev-env
 ./01_prepare_host.sh && ./02_configure_host.sh && ./03_launch_mgmt_cluster.sh
 
 # workload cluster: Cluster, control plane, then the 8 workers

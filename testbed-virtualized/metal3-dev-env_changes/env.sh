@@ -25,3 +25,10 @@ export BOOTSTRAP_CLUSTER=minikube
 
 # memory of every node VM, in MB (vCPUs come from vm-setup/roles/common/defaults/main.yml)
 export TARGET_NODE_MEMORY=32768
+
+
+
+# Uncomment the following lines to use a different Kubernetes version and image
+# export KUBERNETES_VERSION="v1.37.0"
+# export IMAGE_NAME="CENTOS_10_NODE_IMAGE_K8S_v1.37.0.qcow2"
+# export IMAGE_LOCATION="https://idknxc8t3pjc.objectstorage.eu-paris-1.oci.customer-oci.com/p/qBVVBPA7b72OTvcnLaKDkn7N4_YmWeVlBvaIsEnzX9EHGqBXQZyFxG15piXNjYot/n/idknxc8t3pjc/b/public-metal3-node-image-bucket/o"
