@@ -37,7 +37,7 @@ to_terminal() {   # stdin to the terminal only, not to the run log; discarded wh
 }
 die()   { echo "ERROR: $*" >&2; exit 1; }
 check_python() {
-  [ -x "$PYTHON" ] || die "no Python at $PYTHON: create muBench's .venv or set PYTHON=/path/to/python3"
+  [ -x "$PYTHON" ] || die "no Python at $PYTHON: create muBench's .venv (README.md, Setup step 3) or set PYTHON=/path/to/python3"
   "$PYTHON" -c 'import argcomplete, requests' 2>/dev/null \
     || die "$PYTHON lacks the muBench Runner dependencies (argcomplete, requests)"
 }
@@ -110,7 +110,12 @@ write_run_config() {   # name arm...
 # --- fleet ---------------------------------------------------------------------------
 
 ca_scale()    { mgmt scale deployment cluster-autoscaler -n kube-system --replicas="$1" >/dev/null; }
-dreem_scale() { workload scale deployment forecast-deployment dreem-controller-manager -n "$DREEM_NS" --replicas="$1" >/dev/null; }
+need_dreem() {   # resolves DREEM_OPERATOR / DREEM_FORECAST (lib.sh), or stops
+  dreem_deployments || die "DREEM not found in namespace $DREEM_NS: neither dreem-controller-manager +" \
+    "forecast-deployment (DREEM's manifests) nor dreem-dreem-charts-operator + dreem-dreem-charts-forecast" \
+    "(its Helm chart, release dreem). For other names set DREEM_OPERATOR and DREEM_FORECAST."
+}
+dreem_scale() { need_dreem; workload scale deployment "$DREEM_FORECAST" "$DREEM_OPERATOR" -n "$DREEM_NS" --replicas="$1" >/dev/null; }
 
 forecast_enabled() {   # true|false
   workload patch configmap forecast-parameters -n "$DREEM_NS" --type merge \
@@ -118,8 +123,9 @@ forecast_enabled() {   # true|false
 }
 
 forecast_restart() {
-  workload rollout restart deployment forecast-deployment -n "$DREEM_NS" >/dev/null
-  workload rollout status deployment forecast-deployment -n "$DREEM_NS" --timeout=5m >/dev/null
+  need_dreem
+  workload rollout restart deployment "$DREEM_FORECAST" -n "$DREEM_NS" >/dev/null
+  workload rollout status deployment "$DREEM_FORECAST" -n "$DREEM_NS" --timeout=5m >/dev/null
 }
 
 set_forecast_query() {
@@ -134,7 +140,8 @@ set_forecast_query() {
 check_dreem_rbac() {   # DREEM cordons (patch nodes) and drains (Eviction API) before powering a node off
   local sa missing=()
   [ "${DREEM_RBAC_CHECK:-yes}" = no ] && { echo "DREEM RBAC check skipped (DREEM_RBAC_CHECK=no)"; return 0; }
-  sa=$(workload get deployment dreem-controller-manager -n "$DREEM_NS" -o jsonpath='{.spec.template.spec.serviceAccountName}')
+  need_dreem
+  sa=$(workload get deployment "$DREEM_OPERATOR" -n "$DREEM_NS" -o jsonpath='{.spec.template.spec.serviceAccountName}')
   sa="system:serviceaccount:$DREEM_NS:${sa:-default}"
   workload auth can-i patch nodes --as="$sa" >/dev/null 2>&1 || missing+=("patch nodes (cordon, uncordon)")
   # a subresource needs --subresource: "pods/eviction" alone is read as the pod named "eviction"

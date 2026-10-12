@@ -15,6 +15,28 @@ set -euo pipefail
 : "${MGMT_KUBECONFIG:=$HOME/.kube/config}"             # metal3 management cluster (minikube)
 : "${WORKLOAD_KUBECONFIG:=$HOME/workload.kubeconfig}"   # workload cluster running the tests
 : "${METAL3_NS:=metal3}"
+: "${DREEM_NS:=dreem}"
+
+# DREEM's two Deployments are named after how DREEM was installed:
+#   from the DREEM repository's manifests   dreem-controller-manager, forecast-deployment
+#   from its Helm chart (release "dreem")   dreem-dreem-charts-operator, dreem-dreem-charts-forecast
+# dreem_deployments finds the installed pair; DREEM_OPERATOR and DREEM_FORECAST set by hand
+# (e.g. another Helm release name) skip the lookup.
+DREEM_DEPLOYMENT_PAIRS=("dreem-controller-manager forecast-deployment"
+                        "dreem-dreem-charts-operator dreem-dreem-charts-forecast")
+dreem_deployments() {   # sets DREEM_OPERATOR and DREEM_FORECAST; returns 1 when no pair is installed
+  [ -n "${DREEM_OPERATOR:-}" ] && [ -n "${DREEM_FORECAST:-}" ] && return 0
+  local pair operator forecast
+  for pair in "${DREEM_DEPLOYMENT_PAIRS[@]}"; do
+    read -r operator forecast <<<"$pair"
+    if workload get deployment "$operator" "$forecast" -n "$DREEM_NS" >/dev/null 2>&1; then
+      DREEM_OPERATOR=$operator
+      DREEM_FORECAST=$forecast
+      return 0
+    fi
+  done
+  return 1
+}
 
 mgmt()     { kubectl --kubeconfig="$MGMT_KUBECONFIG" "$@"; }
 workload() { kubectl --kubeconfig="$WORKLOAD_KUBECONFIG" "$@"; }

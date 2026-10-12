@@ -71,8 +71,8 @@ cd $REPO/testbed
 ```
 
 The Runner is started with `$MUBENCH/.venv/bin/python3` (muBench is one level above
-the repository unless `MUBENCH` says otherwise), the environment muBench
-is installed into, so there is no need to activate it; set `PYTHON=...` to use
+the repository unless `MUBENCH` says otherwise), the environment you install muBench
+into during setup (README.md, step 3), so there is no need to activate it; set `PYTHON=...` to use
 another one.
 
 | flag | meaning |

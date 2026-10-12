@@ -9,17 +9,17 @@ repository (or wherever `MUBENCH` points).
 |---|---|
 | Commit the experiments used | `176c8f14f2740414436078d5dcd969d38dd4acd4` (main, 2025-06-12); `apply-changes.sh` takes the latest commit unless `--pinned` |
 | Service image | `harbor.crownlabs.polito.it/cloud-sandbox/s324163/mubenchcustom/microservice-screen:latest` (muBench's service cell with `stress-ng`; pulled without credentials) |
-| Python | 3.12, packages in `requirements-venv.txt` (`.venv` in the muBench folder) |
+| Python | 3.12, packages in `requirements-venv.txt`, installed by hand into `.venv` in the muBench folder (see Install) |
 
 ## Files
 
 | Path | What it is |
 |---|---|
-| `apply-changes.sh` | clones muBench one level above the repository (if needed), at the latest commit or with `--pinned` at the experiments' one, copies `files/` over it, unzips the Alibaba traces, creates `.venv` |
+| `apply-changes.sh` | clones muBench one level above the repository (if needed), at the latest commit or with `--pinned` at the experiments' one, copies `files/` over it, puts `requirements-venv.txt` in place of `requirements.txt`, unzips the Alibaba traces; the `.venv` is yours to create (see Install) |
 | `files/` | the changed and added files, at their path in muBench |
 | `changes.patch` | the code and configuration changes as a diff, for review |
-| `requirements-venv.txt` | the package versions of the `.venv` the tests ran with (upstream `requirements.txt` pins versions that no longer install on Python 3.12) |
-| `monitoring/install-monitoring.sh` | muBench's monitoring install with the chart versions pinned, plus the muBench PodMonitor and the control-plane pinning |
+| `requirements-venv.txt` | the package versions the tests ran with; `apply-changes.sh` installs it as muBench's `requirements.txt` (upstream's pins no longer install on Python 3.12) |
+| `monitoring/install-monitoring.sh` | run after muBench's own monitoring install: pins Prometheus, Grafana, kube-state-metrics and the Prometheus operator to the control plane |
 | `monitoring/mubench-dashboard.json`, `monitoring/import-dashboard.sh` | the µBench Grafana dashboard and its import |
 
 ### What changed in muBench
@@ -65,16 +65,31 @@ repository (or wherever `MUBENCH` points).
   request traces generated from the TrafficParameters. Generation is random, so the exact
   files are shipped: every run sends the same requests.
 
-**Other**: `requirements.txt` (`PyYAML>=6.0`); `welcome.sh` and
+**Other**: `requirements.txt` replaced by `requirements-venv.txt` (PyYAML 6.0.3 instead of
+5.4.1, plus packaging, setuptools and wheel); `welcome.sh` and
 `Monitoring/kubernetes-full-monitoring/monitoring-install.sh` made executable.
 
 ## Install
 
 ```bash
 cd $REPO/mubench_changes
-./apply-changes.sh                                   # -> $UPSTREAM/muBench at the latest commit, with .venv
+./apply-changes.sh                                   # -> $UPSTREAM/muBench at the latest commit
 # ./apply-changes.sh --pinned                        #    or at the experiments' commit (warns: may no longer work)
-monitoring/install-monitoring.sh                     # needs the workload cluster with Calico
+
+cd $UPSTREAM/muBench                     # then install muBench as its manual says (Docs/Manual.md):
+python3 -m venv .venv                    # inside the muBench folder: the test scripts use .venv/bin/python3
+.venv/bin/pip install wheel
+.venv/bin/pip install -r requirements.txt   # the versions the tests ran with (~6 min)
+
+# monitoring: muBench's install, against the workload cluster (needs Calico)
+export KUBECONFIG=~/workload.kubeconfig
+cd $UPSTREAM/muBench/Monitoring/kubernetes-full-monitoring
+sh ./monitoring-install.sh                           # Prometheus, Grafana, Istio, Jaeger, Kiali
+kubectl apply -f mub-monitor.yaml                    # PodMonitor of the muBench pods
+unset KUBECONFIG
+
+cd $REPO/mubench_changes
+monitoring/install-monitoring.sh                     # pins the monitoring stack to the control plane
 monitoring/import-dashboard.sh                       # µBench dashboard into Grafana
 ```
 

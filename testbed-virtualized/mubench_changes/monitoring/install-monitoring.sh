@@ -1,70 +1,44 @@
 #!/usr/bin/env bash
-# Monitoring stack and service mesh of the workload cluster, from muBench.
+# Pins the workload cluster's monitoring stack to the control plane.
 #
-# The same steps as muBench's Monitoring/kubernetes-full-monitoring/monitoring-install.sh,
-# with the chart versions the experiments ran on pinned (the original installs whatever is
-# latest), plus what was done by hand after it:
+# The stack itself comes from muBench's own install (README.md, Setup step 4), run
+# against the workload cluster:
 #
-#   kube-prometheus-stack 89.2.2   Prometheus (10-day retention), Grafana 13.2.1,
-#                                  node-exporter, kube-state-metrics; NodePorts 30000/30001
-#   Istio 1.30.4                   base, istiod (zipkin tracer), ingress gateway;
-#                                  sidecar injection in namespace default
-#   Jaeger, Kiali 2.31.0           tracing and mesh view; NodePorts 30002/30003
-#   mub-monitor                    PodMonitor that scrapes the muBench pods (namespace default)
-#   control-plane pinning          Prometheus, Grafana, kube-state-metrics and the operator
-#                                  run on the control plane, so scaling a worker down never
-#                                  interrupts the measurements
+#   Monitoring/kubernetes-full-monitoring/monitoring-install.sh
+#                        kube-prometheus-stack (Prometheus, Grafana; NodePorts 30000/30001),
+#                        Istio (sidecar injection in namespace default), Jaeger and Kiali
+#                        (NodePorts 30002/30003)
+#   kubectl apply -f Monitoring/kubernetes-full-monitoring/mub-monitor.yaml
+#                        PodMonitor that scrapes the muBench pods (namespace default)
 #
-# Usage: ./install-monitoring.sh [MUBENCH_DIR]    (default: <repo>/muBench)
-# WORKLOAD_KUBECONFIG (default ~/workload.kubeconfig). Safe to run again (helm upgrade --install).
+# This script only adds what was done by hand after it: Prometheus, Grafana,
+# kube-state-metrics and the Prometheus operator get a nodeSelector and a toleration for
+# the control plane, so scaling a worker down never interrupts the measurements. It
+# waits for them to roll out. Safe to run again.
+#
+# Usage: ./install-monitoring.sh
+# WORKLOAD_KUBECONFIG (default ~/workload.kubeconfig).
 
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MUBENCH="$(cd "${1:-$HERE/../../muBench}" && pwd)"
 export KUBECONFIG="${WORKLOAD_KUBECONFIG:-$HOME/workload.kubeconfig}"
-PROMETHEUS_CHART=89.2.2
-ISTIO_CHART=1.30.4
-KIALI_CHART=2.31.0
+PROMETHEUS=prometheus-kube-prometheus-prometheus
+DEPLOYMENTS=(prometheus-grafana prometheus-kube-state-metrics prometheus-kube-prometheus-operator)
 
 say() { printf '\n==> %s\n' "$*"; }
-cd "$MUBENCH/Monitoring/kubernetes-full-monitoring"
-
-say "Prometheus and Grafana (kube-prometheus-stack $PROMETHEUS_CHART)"
-kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null
-helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/null
-helm repo add kiali https://kiali.org/helm-charts >/dev/null
-helm repo update >/dev/null
-helm upgrade --install prometheus prometheus-community/kube-prometheus-stack -n monitoring --version "$PROMETHEUS_CHART"
-kubectl apply -n monitoring -f prometheus-nodeport.yaml -f grafana-nodeport.yaml
-
-say "Istio $ISTIO_CHART"
-kubectl create namespace istio-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-helm upgrade --install istio-base istio/base -n istio-system --version "$ISTIO_CHART"
-helm upgrade --install istiod istio/istiod -n istio-system --version "$ISTIO_CHART" \
-  --set global.proxy.tracer="zipkin" --wait
-helm upgrade --install istio-ingressgateway istio/gateway -n istio-system --version "$ISTIO_CHART"
-kubectl label namespace default istio-injection=enabled --overwrite
-kubectl apply -f istio-prometheus-operator.yaml
-
-say "Jaeger and Kiali $KIALI_CHART"
-kubectl apply -f jaeger.yaml -f jaeger-nodeport.yaml
-helm upgrade --install kiali-server kiali/kiali-server -n istio-system --version "$KIALI_CHART" -f kiali-values.yaml
-kubectl apply -f kiali-nodeport.yaml
-
-say "muBench PodMonitor"
-kubectl apply -n default -f mub-monitor.yaml
+kubectl -n monitoring get prometheus "$PROMETHEUS" >/dev/null 2>&1 \
+  || { echo "ERROR: no Prometheus $PROMETHEUS in namespace monitoring of $KUBECONFIG: run muBench's monitoring-install.sh first (README.md, Setup step 4)" >&2; exit 1; }
 
 say "monitoring pinned to the control plane"
 CP='{"node-role.kubernetes.io/control-plane": ""}'
 TOL='[{"key": "node-role.kubernetes.io/control-plane", "operator": "Exists", "effect": "NoSchedule"}]'
-kubectl -n monitoring patch prometheus prometheus-kube-prometheus-prometheus --type=merge \
+kubectl -n monitoring patch prometheus "$PROMETHEUS" --type=merge \
   -p "{\"spec\": {\"nodeSelector\": $CP, \"tolerations\": $TOL}}"
-for d in prometheus-grafana prometheus-kube-state-metrics prometheus-kube-prometheus-operator; do
+for d in "${DEPLOYMENTS[@]}"; do
   kubectl -n monitoring patch deployment "$d" --type=merge \
     -p "{\"spec\": {\"template\": {\"spec\": {\"nodeSelector\": $CP, \"tolerations\": $TOL}}}}"
 done
-for d in prometheus-grafana prometheus-kube-state-metrics prometheus-kube-prometheus-operator; do
+for d in "${DEPLOYMENTS[@]}"; do
   kubectl -n monitoring rollout status deployment "$d" --timeout=10m
 done
 

@@ -11,12 +11,12 @@
 #      and drops upstream's edits (redo the change from changes.patch if needed);
 #   4. copies files/ over the checkout (same paths) and sets the executable bits the
 #      changes add;
-#   5. unzips Examples/Alibaba/traces-mbench.zip (the Alibaba service graphs the work
+#   5. replaces muBench's requirements.txt with requirements-venv.txt, the package
+#      versions the tests ran with (upstream's pins no longer install on Python 3.12);
+#   6. unzips Examples/Alibaba/traces-mbench.zip (the Alibaba service graphs the work
 #      model was generated from), without the macOS metadata;
-#   6. writes the ramp-down copies workload-<n>d.json that RunnerParameters.json lists
-#      (the test scripts refresh them before every arm);
-#   7. creates muBench's Python environment, .venv, with the package versions of
-#      requirements-venv.txt (skip with --no-venv).
+#   7. writes the ramp-down copies workload-<n>d.json that RunnerParameters.json lists
+#      (the test scripts refresh them before every arm).
 #
 # The experiments ran on COMMIT below (also listed in README.md). --pinned checks it
 # out, but an old commit may no longer work: the packages, images and repositories it
@@ -25,7 +25,7 @@
 # What files/ holds is listed in README.md; changes.patch is the code and configuration
 # part as a diff, for review.
 #
-# Usage: ./apply-changes.sh [DIR] [--pinned] [--no-venv]
+# Usage: ./apply-changes.sh [DIR] [--pinned]
 
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,11 +35,10 @@ COMMIT_DATE=2025-06-12
 EXECUTABLE=(welcome.sh Monitoring/kubernetes-full-monitoring/monitoring-install.sh)
 RAMP_DOWN=(0 1 2 3 4)
 
-DIR=""; PINNED=false; VENV=true
+DIR=""; PINNED=false
 for arg in "$@"; do
   case "$arg" in
     --pinned)  PINNED=true ;;
-    --no-venv) VENV=false ;;
     -h|--help) awk 'NR > 1 && /^#/ {sub(/^# ?/, ""); print; next} NR > 1 {exit}' "$0"; exit 0 ;;
     -*)        echo "unknown option: $arg" >&2; exit 1 ;;
     *)         DIR=$arg ;;
@@ -66,7 +65,7 @@ echo "muBench at $(git -C "$DIR" log -1 --format='%h (%cs)')"
 if [ "$HEAD" != "$COMMIT" ]; then
   echo "  the experiments used ${COMMIT:0:10} ($COMMIT_DATE): --pinned to get it"
   if git -C "$DIR" cat-file -e "$COMMIT^{commit}" 2>/dev/null; then
-    changed=$( (cd "$HERE/files" && find . -type f | sed 's|^\./||') | while read -r f; do
+    changed=$( (cd "$HERE/files" && find . -type f | sed 's|^\./||'; echo requirements.txt) | while read -r f; do
       git -C "$DIR" diff --quiet "$COMMIT" HEAD -- "$f" || echo "$f"
     done)
     if [ -n "$changed" ]; then
@@ -86,6 +85,8 @@ echo "copying the changes"
 done
 echo "  $(cd "$HERE/files" && find . -type f | wc -l) files"
 for f in "${EXECUTABLE[@]}"; do chmod +x "$DIR/$f"; done
+install -m 644 "$HERE/requirements-venv.txt" "$DIR/requirements.txt"
+echo "  requirements.txt <- requirements-venv.txt"
 
 TRACES="$DIR/Examples/Alibaba"
 if [ ! -d "$TRACES/traces-mbench" ]; then
@@ -97,13 +98,4 @@ for n in "${RAMP_DOWN[@]}"; do
   cp -f "$DIR/SimulationWorkspace/workload-$n.json" "$DIR/SimulationWorkspace/workload-${n}d.json"
 done
 
-if $VENV; then
-  if [ ! -x "$DIR/.venv/bin/python3" ]; then
-    echo "creating $DIR/.venv"
-    python3 -m venv "$DIR/.venv"
-  fi
-  "$DIR/.venv/bin/pip" install -q -r "$HERE/requirements-venv.txt"
-  "$DIR/.venv/bin/python3" -c 'import argcomplete, requests, yaml, kubernetes' \
-    && echo "  .venv ready: $("$DIR/.venv/bin/python3" --version)"
-fi
-echo "muBench ready in $DIR"
+echo "muBench ready to be installed and run in $DIR"

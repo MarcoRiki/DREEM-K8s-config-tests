@@ -126,8 +126,7 @@ deprovision nor provision a host, so a Karpenter Machine would never get one. Re
 as for Cluster Autoscaler, and switch DREEM off:
 
 ```bash
-kubectl --kubeconfig ~/workload.kubeconfig -n dreem scale deployment \
-  dreem-controller-manager forecast-deployment --replicas=0
+kubectl --kubeconfig ~/workload.kubeconfig -n dreem scale deployment --all --replicas=0   # DREEM's operator and forecaster
 cd $REPO/testbed && bash -c 'source ./run-lib.sh; provision_fleet ca'
 ```
 

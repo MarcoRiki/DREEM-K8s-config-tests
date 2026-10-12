@@ -47,9 +47,21 @@ commit the script warns if upstream changed one of the files it overwrites.
 
 The host needs Ubuntu 24.04 with passwordless `sudo` and room for the VMs (9 × 10 vCPU
 and 32 GB, plus 8 CPU / 8 GB for minikube; the original host has 96 CPUs and 503 GB).
-Install clusterctl v1.13.5, helm, envsubst (gettext-base), unzip, git and Python 3.12;
-metal3-dev-env installs jq, kubectl, minikube, libvirt and docker itself. Run every step
-from a shell where the repository path is set:
+Install clusterctl v1.13.5, helm v4.2.4, envsubst (gettext-base), unzip, git and Python
+3.12; metal3-dev-env installs jq, kubectl, minikube, libvirt and docker itself. Helm, at
+the version the experiments used (muBench's monitoring install and the DREEM chart need it):
+
+```bash
+curl -fsSLO https://get.helm.sh/helm-v4.2.4-linux-amd64.tar.gz
+curl -fsSL https://get.helm.sh/helm-v4.2.4-linux-amd64.tar.gz.sha256sum | sha256sum -c -
+tar -xzf helm-v4.2.4-linux-amd64.tar.gz linux-amd64/helm
+sudo install -m 755 linux-amd64/helm /usr/local/bin/helm
+rm -r helm-v4.2.4-linux-amd64.tar.gz linux-amd64
+helm version   # v4.2.4
+# or the latest Helm 4: curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash
+```
+
+Run every step from a shell where the repository path is set:
 
 ```bash
 export REPO=$(pwd)                       # this folder, testbed-virtualized/
@@ -93,20 +105,39 @@ chmod +x "$REPO"/testbed/*.py                    # export-metrics.py and the oth
 3. **Get muBench and apply the changes.**
 
    ```bash
-   $REPO/mubench_changes/apply-changes.sh   # latest commit into $UPSTREAM/muBench, copies the changes,
-                                            # unzips traces-mbench.zip, creates .venv (~6 min)
-                                            # (--pinned: the commit the experiments used, may no longer work)
+   $REPO/mubench_changes/apply-changes.sh   # latest commit into $UPSTREAM/muBench, copies the changes, unzips traces-mbench.zip
+   cd $UPSTREAM/muBench                     # then install muBench as its manual says (Docs/Manual.md):
+   python3 -m venv .venv                    # inside the muBench folder: the test scripts use .venv/bin/python3
+   .venv/bin/pip install wheel
+   .venv/bin/pip install -r requirements.txt   # the versions the tests ran with (~6 min)
    ```
+
+   `apply-changes.sh` replaces muBench's `requirements.txt` with the package versions the
+   tests ran with (upstream's no longer install on Python 3.12). If a package fails to
+   build, install `libffi-dev`, `libcairo2` and `build-essential` (muBench's manual has
+   the details).
 
 4. **Install the monitoring stack and import the Grafana dashboard.**
 
+   The stack is muBench's own install (its `Monitoring/kubernetes-full-monitoring/README.md`):
+   Prometheus, Grafana, Istio, Jaeger, Kiali and the PodMonitor of the muBench pods. Run
+   it against the workload cluster, not the management one `kubectl` points at by default:
+
    ```bash
-   $REPO/mubench_changes/monitoring/install-monitoring.sh   # Prometheus, Grafana, Istio, Jaeger, Kiali (pinned versions)
-   $REPO/mubench_changes/monitoring/import-dashboard.sh     # µBench dashboard
+   export KUBECONFIG=~/workload.kubeconfig
+   cd $UPSTREAM/muBench/Monitoring/kubernetes-full-monitoring
+   sh ./monitoring-install.sh                               # muBench's install (latest chart versions)
+   kubectl apply -f mub-monitor.yaml                        # PodMonitor of the muBench pods
+   unset KUBECONFIG
+
+   $REPO/mubench_changes/monitoring/install-monitoring.sh   # pins Prometheus and Grafana to the control plane
+   $REPO/mubench_changes/monitoring/import-dashboard.sh     # imports the µBench dashboard
    ```
 
-   This is muBench's `monitoring-install.sh` with the chart versions pinned, plus the
-   muBench PodMonitor and Prometheus and Grafana pinned to the control plane.
+   `install-monitoring.sh` only patches what muBench installed: Prometheus, Grafana,
+   kube-state-metrics and the Prometheus operator move to the control plane, so scaling
+   a worker down never interrupts the measurements. muBench's script installs the latest
+   charts; the versions the experiments used are in [Pinned versions](#pinned-versions).
 
 5. **Install DREEM, Cluster Autoscaler and Karpenter, all switched off.**
 

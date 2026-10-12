@@ -3,7 +3,7 @@
 #
 #   host            tools, passwordless sudo, libvirt VMs, provisioning bridge
 #   checkouts       metal3-dev-env and muBench (one level above the repository) with the
-#                   changes applied, their commit against the experiments' one, muBench's traces, inputs and .venv
+#                   changes applied, their commit against the experiments' one, muBench's traces, inputs and the .venv you create
 #   management      Cluster API / Metal3 / Ironic, BareMetalHosts, the worker
 #                   MachineDeployment (Cluster Autoscaler bounds, labels at join),
 #                   Cluster Autoscaler and Karpenter installed and switched off
@@ -78,6 +78,10 @@ checkout() {   # name dir commit changes-dir
   head=$(git -C "$dir" rev-parse HEAD)
   if [ "$head" = "$commit" ]; then ok "$name at the experiments' commit ${commit:0:10}"
   else warn "$name at ${head:0:10}, the experiments used ${commit:0:10} (apply-changes.sh --pinned)"; fi
+  # other package versions are fine as long as muBench runs: the .venv check below decides
+  if [ -f "$changes/requirements-venv.txt" ] && ! cmp -s "$changes/requirements-venv.txt" "$dir/requirements.txt"; then
+    warn "$name: requirements.txt is not requirements-venv.txt, the versions the tests ran with (run $changes/apply-changes.sh)"
+  fi
   if diff=$(same_files "$changes" "$dir"); then ok "$name: changes applied ($(cd "$changes/files" && find . -type f | wc -l) files)"
   else fail "$name: changes missing or different: $diff (run $changes/apply-changes.sh)"; fi
 }
@@ -90,7 +94,7 @@ else
 fi
 if checkout muBench "$MUBENCH" "$MUBENCH_COMMIT" "$REPO/mubench_changes"; then
   check "muBench: Alibaba traces unzipped" test -d "$MUBENCH/Examples/Alibaba/traces-mbench/par"
-  check "muBench: .venv with the Runner's dependencies" "$MUBENCH/.venv/bin/python3" -c 'import argcomplete, requests, yaml'
+  check "muBench: .venv with the Runner's dependencies (README.md, Setup step 3)" "$MUBENCH/.venv/bin/python3" -c 'import argcomplete, requests, yaml'
   missing=$(cd "$MUBENCH" && for f in $(jq -r '.RunnerParameters.workload_files_path_list[]' Configs/RunnerParameters.json); do [ -s "$f" ] || echo "$f"; done)
   if [ -z "$missing" ]; then ok "muBench: every workload file of RunnerParameters.json present"
   else fail "muBench: workload files missing: $(echo $missing)"; fi
@@ -125,8 +129,11 @@ if check_mgmt_cluster >/dev/null 2>&1; then
   if [ -n "$md" ]; then
     ok "MachineDeployment $MD_NAME: $(jq -r '"\(.spec.replicas) replicas, \(.status.readyReplicas // 0) ready"' <<<"$md")"
     bounds=$(jq -r '.metadata.annotations | "\(.["cluster.x-k8s.io/cluster-api-autoscaler-node-group-min-size"])/\(.["cluster.x-k8s.io/cluster-api-autoscaler-node-group-max-size"])/\(.["cluster.x-k8s.io/autoscaling-options-scaledownutilizationthreshold"])"' <<<"$md")
-    [ "$bounds" = "3/8/0.4" ] && ok "Cluster Autoscaler bounds on $MD_NAME: min 3, max 8, threshold 0.4" \
-      || fail "Cluster Autoscaler bounds on $MD_NAME are min/max/threshold $bounds, expected 3/8/0.4 (CA/README.md)"
+    # the paper's tests ran with 3/8/0.4: other values work, but are not the tests' setup
+    if [ "$bounds" = "3/8/0.4" ]; then ok "Cluster Autoscaler bounds on $MD_NAME: min 3, max 8, threshold 0.4"
+    elif [[ "$bounds" == null/* || "$bounds" == */null/* ]]; then
+      fail "Cluster Autoscaler min/max annotations missing on $MD_NAME ($bounds): Cluster Autoscaler cannot scale it (CA/README.md)"
+    else warn "Cluster Autoscaler bounds on $MD_NAME are min/max/threshold $bounds, the paper's tests used 3/8/0.4 (CA/README.md)"; fi
     m3mt=$(jq -r '.spec.template.spec.infrastructureRef.name' <<<"$md")
     kct=$(jq -r '.spec.template.spec.bootstrap.configRef.name' <<<"$md")
     dt=$(mgmt get metal3machinetemplate "$m3mt" -n "$METAL3_NS" -o jsonpath='{.spec.template.spec.dataTemplate.name}')
@@ -208,7 +215,7 @@ if check_workload_cluster >/dev/null 2>&1; then
   else fail "Prometheus not reachable through the API server, or no node-exporter target up"; fi
   retention=$(workload get prometheus -n monitoring -o jsonpath='{.items[0].spec.retention}' 2>/dev/null)
   [ "$retention" = 10d ] && ok "Prometheus retention 10d (export a run within 10 days)" || warn "Prometheus retention ${retention:-unknown}"
-  check "PodMonitor mub-monitor scrapes the muBench pods" workload get podmonitor mub-monitor -n default
+  check "PodMonitor mub-monitor scrapes the muBench pods (muBench's mub-monitor.yaml, README.md step 4)" workload get podmonitor mub-monitor -n default
   check "Grafana available" dep_ready monitoring prometheus-grafana
   # the dashboard, through a short port-forward with the admin credentials (never printed)
   PORT=$((38100 + RANDOM % 800))
@@ -222,12 +229,17 @@ if check_workload_cluster >/dev/null 2>&1; then
 
   # DREEM
   if workload get ns dreem >/dev/null 2>&1; then
-    for d in dreem-controller-manager forecast-deployment; do
-      r=$(workload get deploy "$d" -n dreem -o jsonpath='{.spec.replicas}' 2>/dev/null)
-      if [ -z "$r" ]; then fail "DREEM: deployment $d missing"
-      elif [ "$r" = 0 ]; then ok "DREEM: $d installed, switched off"
-      else warn "DREEM: $d running ($r replicas): test.sh switches it on and off per arm"; fi
-    done
+    # dreem-controller-manager + forecast-deployment (manifests) or dreem-dreem-charts-* (Helm chart)
+    if dreem_deployments; then
+      for d in "$DREEM_OPERATOR" "$DREEM_FORECAST"; do
+        r=$(workload get deploy "$d" -n dreem -o jsonpath='{.spec.replicas}' 2>/dev/null)
+        if [ -z "$r" ]; then fail "DREEM: deployment $d missing"
+        elif [ "$r" = 0 ]; then ok "DREEM: $d installed, switched off"
+        else warn "DREEM: $d running ($r replicas): test.sh switches it on and off per arm"; fi
+      done
+    else
+      fail "DREEM: Deployments missing: neither dreem-controller-manager + forecast-deployment (manifests) nor dreem-dreem-charts-operator + dreem-dreem-charts-forecast (Helm chart); other names: set DREEM_OPERATOR and DREEM_FORECAST"
+    fi
     enabled=$(workload get cm forecast-parameters -n dreem -o jsonpath='{.data.Enabled}' 2>/dev/null)
     case "$enabled" in
       false) ok "DREEM: forecaster disabled (forecast-parameters Enabled=false)" ;;
@@ -235,15 +247,20 @@ if check_workload_cluster >/dev/null 2>&1; then
       *)     fail "DREEM: ConfigMap forecast-parameters missing" ;;
     esac
     bounds=$(workload get cm cluster-configuration-parameters -n dreem -o jsonpath='{.data.minNodes}/{.data.maxNodes}' 2>/dev/null)
-    [ "$bounds" = 3/8 ] && ok "DREEM: minNodes 3, maxNodes 8" || fail "DREEM: cluster-configuration-parameters minNodes/maxNodes '$bounds', expected 3/8"
+    # the paper's tests ran with 3/8: other bounds work, but are not the tests' setup
+    if [ "$bounds" = 3/8 ]; then ok "DREEM: minNodes 3, maxNodes 8"
+    elif [ -z "$bounds" ] || [ "$bounds" = / ]; then fail "DREEM: ConfigMap cluster-configuration-parameters missing, or without minNodes/maxNodes"
+    else warn "DREEM: cluster-configuration-parameters minNodes/maxNodes '$bounds', the paper's tests used 3/8"; fi
     crds=$(workload get crd -o name | grep -c 'cluster.dreemk8s$')
     [ "$crds" -ge 3 ] && ok "DREEM: CRDs installed ($crds)" || fail "DREEM: $crds CRDs of group cluster.dreemk8s"
-    sa=$(workload get deploy dreem-controller-manager -n dreem -o jsonpath='{.spec.template.spec.serviceAccountName}' 2>/dev/null)
-    sa="system:serviceaccount:dreem:${sa:-default}"
-    if workload auth can-i patch nodes --as="$sa" >/dev/null 2>&1 \
-       && workload auth can-i create pods --subresource=eviction -n default --as="$sa" >/dev/null 2>&1; then
-      ok "DREEM: may cordon and drain"
-    else fail "DREEM: $sa may not patch nodes or evict pods in default (needed to cordon and drain)"; fi
+    if [ -n "${DREEM_OPERATOR:-}" ]; then
+      sa=$(workload get deploy "$DREEM_OPERATOR" -n dreem -o jsonpath='{.spec.template.spec.serviceAccountName}' 2>/dev/null)
+      sa="system:serviceaccount:dreem:${sa:-default}"
+      if workload auth can-i patch nodes --as="$sa" >/dev/null 2>&1 \
+         && workload auth can-i create pods --subresource=eviction -n default --as="$sa" >/dev/null 2>&1; then
+        ok "DREEM: $sa may cordon and drain"
+      else fail "DREEM: $sa may not patch nodes or evict pods in default (needed to cordon and drain)"; fi
+    fi
     missing=()
     for n in $(workload get nodes -l '!node-role.kubernetes.io/control-plane' -o jsonpath='{.items[*].metadata.name}'); do
       workload get secret "bmc-credentials-$n" -n dreem >/dev/null 2>&1 || missing+=("$n")

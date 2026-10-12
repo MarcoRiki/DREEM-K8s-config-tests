@@ -38,12 +38,15 @@ grafana() {   # method path [body-file] -> HTTP status, response body in $OUT
        ${3:+--data-binary @"$3"} "http://127.0.0.1:$PORT$2"
 }
 
+# the export keeps the metadata the source Grafana assigned (uid, resourceVersion,
+# generation, creationTimestamp, internal ID, creator): send the name only
+CLEAN='.metadata = {name: .metadata.name}'
 if [ "$(grafana GET "$API/$NAME")" = 200 ]; then
   # replace: the live object's resourceVersion makes it an update
-  jq --arg rv "$(jq -r '.metadata.resourceVersion' "$OUT")" '.metadata.resourceVersion = $rv' "$DASHBOARD" > "$BODY"
+  jq --arg rv "$(jq -r '.metadata.resourceVersion' "$OUT")" "$CLEAN | .metadata.resourceVersion = \$rv" "$DASHBOARD" > "$BODY"
   code=$(grafana PUT "$API/$NAME$QUERY" "$BODY"); action=replaced
 else
-  cp "$DASHBOARD" "$BODY"
+  jq "$CLEAN" "$DASHBOARD" > "$BODY"
   code=$(grafana POST "$API$QUERY" "$BODY"); action=created
 fi
 case "$code" in
