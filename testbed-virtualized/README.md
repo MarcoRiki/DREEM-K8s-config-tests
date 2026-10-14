@@ -22,7 +22,7 @@ and a group per host. The application and its load come from
 | `DREEM/` | the Helm values for DREEM (operator and forecaster), to be added; its README lists the names the tests rely on |
 | `CA/` | Cluster Autoscaler v1.29.0 (Cluster API provider): manifest and install instructions |
 | `Karpenter/` | Karpenter with its Cluster API provider: manifests, CRDs, the image build, a feasibility check and install instructions |
-| `testbed/` | the experiment: fleet profiles, workload deployment, emulated network latency, one script per compared configuration (`test.sh`, `test_CA.sh`, `test_Karpenter.sh`), metrics export and analysis; `RUNNING.md` is the manual |
+| `testbed/` | the experiment: fleet profiles, workload deployment, emulated network latency, one script per compared configuration (`test.sh`, `test_CA.sh`, `test_Karpenter.sh`, `test_DREEM_extra.sh` for the simplified DREEM), metrics export and analysis; `RUNNING.md` is the manual |
 | `check_setup.sh` | checks, without changing anything, that everything is in place for the tests |
 
 The setup clones metal3-dev-env and muBench into `metal3-dev-env/` and `muBench/` one
@@ -171,6 +171,8 @@ cd $REPO/testbed
 ./test.sh           --rep=1 --anchors=mixed --latency=yes --delay=2ms --repair=yes   # ENERGY, QOS, BASELINE
 ./test_CA.sh        --rep=1 --anchors=mixed --latency=yes --delay=2ms --repair=yes   # Cluster Autoscaler
 ./test_Karpenter.sh --rep=1 --anchors=mixed --latency=yes --delay=2ms --repair=yes   # Karpenter
+./test_DREEM_extra.sh --rep=1 --anchors=mixed --latency=yes --delay=2ms --repair=yes \
+                    --selectionPolicy=RANDOM --hardCheck=FALSE                     # simplified DREEM (testbed/RUNNING.md)
 ./export-metrics.py --run-dir Result/anchors-mixed_delay-2ms_repair/rep1          # within 10 days
 ./base-latency.sh   --run-dir Result/anchors-mixed_delay-2ms_repair/rep1          # base latency for the notebook (~50 min)
 ```

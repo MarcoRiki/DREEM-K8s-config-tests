@@ -15,8 +15,9 @@ reads them unchanged:
   Node info.csv                           Node info                 CA only, node:ip::systemUUID
   Node info-data-KARPENTER.csv            Node info                 the same for Karpenter
 
-<A> is DREEM-QOS, DREEM-ENERGY, BASELINE, CA, KARPENTER or a BASELINE on fewer workers
-(test.sh's BASELINE_N: BASELINE_6, BASELINE_7_big, ...); <B> is the same without
+<A> is DREEM-QOS, DREEM-ENERGY, BASELINE, CA, KARPENTER, a BASELINE on fewer workers
+(test.sh's BASELINE_N: BASELINE_6, BASELINE_7_big, ...) or a simplified DREEM arm
+(test_DREEM_extra.sh: RANDOM_nochecks, TOPSIS_ENERGY_checks, ...); <B> is the same without
 "DREEM-", as in the exports the notebook was written against. Node info follows the
 machines of the arms that reprovision nodes; the notebook finds Karpenter's next to its
 Node CPU usage file.
@@ -55,6 +56,8 @@ DREEM_PREFIXED = {"QOS": "DREEM-QOS", "ENERGY": "DREEM-ENERGY", "BASELINE": "BAS
                   "KARPENTER": "KARPENTER"}
 # test.sh's BASELINE_N arm, named after its fleet: BASELINE_6, BASELINE_7_big, BASELINE_5_small
 BASELINE_N = re.compile(r"BASELINE_[0-9]+(_[a-z]+)?")
+# test_DREEM_extra.sh's arm, named after its settings: RANDOM_nochecks, TOPSIS_ENERGY_checks, ...
+DREEM_EXTRA = re.compile(r"(RANDOM|TOPSIS_(ENERGY|QOS))_(checks|nochecks)")
 
 
 def arm_name(name):
@@ -62,7 +65,7 @@ def arm_name(name):
     name = name.strip()
     if name.upper() in ARMS:
         return name.upper()
-    return name if BASELINE_N.fullmatch(name) else None
+    return name if BASELINE_N.fullmatch(name) or DREEM_EXTRA.fullmatch(name) else None
 STEP_S = 30
 PENDING_EXPR = 'sum(kube_pod_status_phase{phase="Pending", namespace="default"})'
 
@@ -239,7 +242,8 @@ def main():
         arms = [a for a in args.arms.split(",") if a.strip()]
         unknown = [a for a in arms if arm_name(a) is None]
         if unknown:
-            sys.exit(f"unknown arm {', '.join(unknown)}: use {', '.join(ARMS)} or BASELINE_<N>[_<size>]")
+            sys.exit(f"unknown arm {', '.join(unknown)}: use {', '.join(ARMS)}, BASELINE_<N>[_<size>], "
+                     "RANDOM_<checks|nochecks> or TOPSIS_<ENERGY|QOS>_<checks|nochecks>")
         arms = [arm_name(a) for a in arms]
     else:
         found = {p.name[:-len("_window.json")] for p in args.run_dir.glob("*_window.json")}

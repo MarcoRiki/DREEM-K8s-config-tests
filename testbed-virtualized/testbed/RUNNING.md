@@ -18,7 +18,8 @@ testbed/
   lib.sh                  control-plane discovery (Machine -> Metal3Machine -> BMH)
   test_CA.sh              the Cluster Autoscaler arm (same flags and folder as test.sh)
   test_Karpenter.sh       the Karpenter arm (same flags and folder; see ../Karpenter/)
-  run-lib.sh              the steps test.sh, test_CA.sh and test_Karpenter.sh share
+  test_DREEM_extra.sh     a simplified DREEM arm: RANDOM or TOPSIS choice, with or without checks
+  run-lib.sh              the steps every test script shares
   deploy-mubench.sh       renders and applies the workload (heavy services, anchors, probes)
   latency.sh              emulated delay between workers: enable, disable, check
   sync-bmc-secrets.sh     DREEM's per-node BMC secrets, rebuilt from the BMHs
@@ -68,6 +69,8 @@ cd $REPO/testbed
 ./test.sh           --rep=1 --anchors=big --latency=yes --delay=5ms   # ENERGY, QOS, BASELINE
 ./test_CA.sh        --rep=1 --anchors=big --latency=yes --delay=5ms   # Cluster Autoscaler
 ./test_Karpenter.sh --rep=1 --anchors=big --latency=yes --delay=5ms   # Karpenter
+./test_DREEM_extra.sh --rep=1 --anchors=big --latency=yes --delay=5ms \
+                      --selectionPolicy=RANDOM --hardCheck=FALSE       # random, no checks
 ```
 
 The Runner is started with `$MUBENCH/.venv/bin/python3` (muBench is one level above
@@ -189,6 +192,33 @@ Several sizes are separate arms of the same folder (one `--nodes` per call), e.g
 the hosts. The powered-off nodes stay off after the last arm, until the next test script
 powers them on.
 
+**Simplified DREEM (`test_DREEM_extra.sh`).** Another baseline for DREEM: a simplified
+operator and forecaster (`dreem-k8s-simplified/dreem-operator-simp` and
+`forecaster-simp`, 0.0.1; the script first checks that the registry has them, and
+`DREEM_SIMP_OPERATOR_IMAGE` / `DREEM_SIMP_FORECAST_IMAGE` select other versions). They
+run as copies of DREEM's two Deployments (installed from the manifests or the Helm chart),
+`dreem-controller-manager-simp` and `forecast-deployment-simp` (created with 0 replicas by
+the first run), switched on only for the arm, like Cluster Autoscaler and Karpenter. Both
+versions share the operator's leader lease, the ConfigMaps and the NodeSelecting objects,
+so they never run together: the script switches the original off, and the other test
+scripts switch the simplified one off. Its two settings go into
+`cluster-configuration-parameters` for the arm and back to the defaults at the end:
+
+```yaml
+selectionPolicy: "TOPSIS"   # TOPSIS, or RANDOM as a baseline (selectionProfile is then ignored)
+hardChecks: "true"          # false: scale-downs skip the feasibility checks, in the operator and in the forecaster
+```
+
+| flags | arm |
+|---|---|
+| `--selectionPolicy=RANDOM --hardCheck=FALSE` | `RANDOM_nochecks` (the random, aggressive baseline) |
+| `--selectionPolicy=RANDOM` (`--hardCheck` defaults to TRUE) | `RANDOM_checks` |
+| `--selectionPolicy=TOPSIS --profile=ENERGY\|QOS [--hardCheck=FALSE]` | `TOPSIS_ENERGY_nochecks`, `TOPSIS_QOS_checks`, ... |
+
+The arm runs like a DREEM arm of `test.sh` (fleet detached, placement reset, forecaster
+on for the workload) and saves the same files, plus `deploy/dreem_extra_<arm>.json` and
+`deploy/cluster-configuration-parameters_<arm>.yaml`.
+
 DREEM's forecaster request-rate query is restricted to the heavy services
 (`app_name=~"s[0-9]+"`), so the probe traffic does not drive scaling. The ramp-down
 workloads are run from `workload-<n>d.json` copies, so no result file overwrites
@@ -239,8 +269,9 @@ names, columns and layout of a Grafana "Download CSV":
 | `Node info.csv` | Node info (`node:ip::systemUUID`), Cluster Autoscaler arm only |
 | `Node info-data-KARPENTER.csv` | the same for the Karpenter arm |
 
-`<A>` is `DREEM-QOS`, `DREEM-ENERGY`, `BASELINE`, `CA`, `KARPENTER` or a `BASELINE_N` arm
-(`BASELINE_6`, `BASELINE_7_big`, ...); `<B>` the same without `DREEM-`. Without
+`<A>` is `DREEM-QOS`, `DREEM-ENERGY`, `BASELINE`, `CA`, `KARPENTER`, a `BASELINE_N` arm
+(`BASELINE_6`, `BASELINE_7_big`, ...) or a `test_DREEM_extra.sh` arm (`RANDOM_nochecks`,
+...); `<B>` the same without `DREEM-`. Without
 `--arms` every arm with a `<ARM>_window.json` is exported. Checked against the Grafana downloads of a run: same columns, same
 values.
 

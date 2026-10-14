@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Steps shared by test.sh (DREEM ENERGY/QOS and BASELINE), test_CA.sh (Cluster
-# Autoscaler) and test_Karpenter.sh (Karpenter), so every arm prepares the fleet, the
+# Autoscaler), test_Karpenter.sh (Karpenter) and test_DREEM_extra.sh (simplified DREEM),
+# so every arm prepares the fleet, the
 # workload, the network and the result folder in exactly the same way. Sourced by those
 # scripts, not run directly.
 
@@ -115,7 +116,23 @@ need_dreem() {   # resolves DREEM_OPERATOR / DREEM_FORECAST (lib.sh), or stops
     "forecast-deployment (DREEM's manifests) nor dreem-dreem-charts-operator + dreem-dreem-charts-forecast" \
     "(its Helm chart, release dreem). For other names set DREEM_OPERATOR and DREEM_FORECAST."
 }
-dreem_scale() { need_dreem; workload scale deployment "$DREEM_FORECAST" "$DREEM_OPERATOR" -n "$DREEM_NS" --replicas="$1" >/dev/null; }
+dreem_scale() {   # replicas: the original DREEM; the simplified one is always switched off
+  # both versions share the operator's leader lease and the NodeSelecting objects, and two
+  # forecasters would each take decisions: they never run together
+  need_dreem
+  dreem_simp_scale 0
+  workload scale deployment "$DREEM_FORECAST" "$DREEM_OPERATOR" -n "$DREEM_NS" --replicas="$1" >/dev/null
+}
+
+# the simplified DREEM of test_DREEM_extra.sh: copies of the two Deployments with other images
+DREEM_SIMP_DEPLOYMENTS=(dreem-controller-manager-simp forecast-deployment-simp)
+dreem_simp_scale() {   # replicas, for the copies that exist (test_DREEM_extra.sh creates them)
+  local d
+  for d in "${DREEM_SIMP_DEPLOYMENTS[@]}"; do
+    workload get deployment "$d" -n "$DREEM_NS" >/dev/null 2>&1 || continue
+    workload scale deployment "$d" -n "$DREEM_NS" --replicas="$1" >/dev/null
+  done
+}
 
 forecast_enabled() {   # true|false
   workload patch configmap forecast-parameters -n "$DREEM_NS" --type merge \
