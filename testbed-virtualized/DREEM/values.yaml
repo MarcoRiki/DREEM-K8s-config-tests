@@ -1,0 +1,192 @@
+# DREEM looks up its ConfigMaps, Secrets and custom resources in the "dreem"
+# namespace (hardcoded in the operator and in the forecaster), so the chart
+# must be installed with: helm install <release> <chart> -n dreem --create-namespace
+
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+# Default Prometheus endpoint, used by the forecaster and the metricUpdate
+# CronJob unless they set their own prometheusUrl.
+prometheus:
+  url: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+
+crds:
+  # Render the cluster.dreemk8s CRDs from files/crds (synced with `make helm-sync`).
+  install: true
+  # Keep the CRDs, and therefore every ClusterConfiguration/NodeSelecting/
+  # NodeHandling, when the release is uninstalled.
+  keep: true
+
+# --------------------------------------------------------------------------
+# Operator (controller-manager)
+# --------------------------------------------------------------------------
+operator:
+  replicas: 1
+  image:
+    repository: harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s/dreem-operator
+    tag: "0.0.32"
+    pullPolicy: IfNotPresent
+  leaderElect: true
+  maxConfigurations: 150000
+  extraArgs: []
+  metrics:
+    # Expose /metrics over HTTPS on 8443, protected by authn/authz.
+    enabled: true
+    port: 8443
+  resources:
+    limits:
+      cpu: 2500m
+      memory: 4096Mi
+    requests:
+      cpu: 256m
+      memory: 256Mi
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  affinity: {}
+
+# --------------------------------------------------------------------------
+# Forecaster
+# --------------------------------------------------------------------------
+forecast:
+  enabled: true
+  image:
+    repository: harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s/forecast
+    tag: "0.0.60"
+    pullPolicy: IfNotPresent
+  # Minutes to wait before the first forecast.
+  startAfter: 5
+  # Interval of the PromQL rate() function.
+  rateInterval: 10m
+  # Overrides prometheus.url when set.
+  prometheusUrl: ""
+  extraArgs: []
+  resources: {}
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: ""
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  affinity: {}
+
+# --------------------------------------------------------------------------
+# metricUpdate CronJob (optional): refreshes the node energy profiles
+# --------------------------------------------------------------------------
+metricUpdate:
+  enabled: false
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  image:
+    repository: harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s/energy-profile-update
+    tag: "0.0.7"
+    pullPolicy: Always
+  # Observation window, in hours.
+  hours: 24
+  # Sampling period, in seconds.
+  step: 30
+  # Overrides prometheus.url when set.
+  prometheusUrl: ""
+  extraArgs: []
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# --------------------------------------------------------------------------
+# DREEM configuration (ConfigMaps read by the operator and the forecaster).
+# The ConfigMap names are fixed: the components look them up by name.
+# See deploy/configmaps/README.md for the meaning of each parameter.
+# --------------------------------------------------------------------------
+config:
+  # ConfigMap cluster-configuration-parameters
+  clusterConfiguration:
+    minNodes: 3
+    maxNodes: 8
+    selectionProfile: ENERGY # NEUTRAL, QOS, ENERGY
+
+  # ConfigMap forecast-parameters
+  forecastParameters:
+    Past_time_window: 5
+    Prometheus_time_window_prediction_in_minutes: 60
+    Thresholds_min: 40
+    Thresholds_max: 65
+    Forecast_period_in_minutes: 5
+    Prediction_model: LSTM # or naive
+    Mean_time_to_boot: 1
+    Enabled: false
+    Stabilization_cycles: 2
+    # Must be federated from the target cluster (match[] in deploy/scrapefederate.yaml).
+    # Empty disables the request-rate anticipation.
+    Request_rate_query: sum(rate(mub_request_processing_latency_milliseconds_count{app_name=~"s[0-9]+"}[2m])) # microservices excluding the probes
+    Anticipation_max_multiplier: 1.5
+    Anticipation_min_request_rate: 0.5
+    Anticipation_min_cpu_percent: 5.0
+    Pending_check_period_seconds: 15
+    Pending_scale_up_after_seconds: 300
+    Pending_post_scale_up_grace_seconds: 60
+    Pending_scale_down_cooldown_minutes: 10
+
+  # ConfigMap selection-weights-scale-up
+  selectionWeightsScaleUp:
+    EnergyProfile: 0.5
+    PowerCycles: 0.5
+
+  # ConfigMap selection-weights-scale-down: one block per selectionProfile.
+  selectionWeightsScaleDown:
+    energy:
+      PreferredNodeAffinity: 0.0053
+      PreferredPodAffinity: 0.0098
+      PreferredPodAntiAffinity: 0.0098
+      EnergyProfile: 0.7500
+      PowerCycles: 0.1500
+      NumberOfRunningPods: 0.0375
+      TopologySpread: 0.0375
+    neutral:
+      PreferredNodeAffinity: 0.0267
+      PreferredPodAffinity: 0.0492
+      PreferredPodAntiAffinity: 0.0492
+      EnergyProfile: 0.4167
+      PowerCycles: 0.0833
+      NumberOfRunningPods: 0.1874
+      TopologySpread: 0.1874
+    qos:
+      PreferredNodeAffinity: 0.0480
+      PreferredPodAffinity: 0.0886
+      PreferredPodAntiAffinity: 0.0886
+      EnergyProfile: 0.0833
+      PowerCycles: 0.0167
+      NumberOfRunningPods: 0.3373
+      TopologySpread: 0.3373
+
+  # One Secret bmc-credentials-<node> per entry, read by the NodeHandling
+  # controller to power servers on/off. Leave empty to manage the Secrets
+  # outside the chart. Example:
+  #   - node: dreem-kind-worker
+  #     username: admin
+  #     password: changeme
+  #     bmcAddress: 10.0.0.10
+  #     id: "1"
+  bmcCredentials: []
