@@ -18,7 +18,7 @@ testbed/
   lib.sh                  control-plane discovery (Machine -> Metal3Machine -> BMH)
   test_CA.sh              the Cluster Autoscaler arm (same flags and folder as test.sh)
   test_Karpenter.sh       the Karpenter arm (same flags and folder; see ../Karpenter/)
-  test_DREEM_extra.sh     a simplified DREEM arm: RANDOM or TOPSIS choice, with or without checks
+  test_DREEM_extra.sh     a simplified DREEM arm: RANDOM, TOPSIS or Menouer et al., with or without checks
   run-lib.sh              the steps every test script shares
   deploy-mubench.sh       renders and applies the workload (heavy services, anchors, probes)
   latency.sh              emulated delay between workers: enable, disable, check
@@ -71,6 +71,8 @@ cd $REPO/testbed
 ./test_Karpenter.sh --rep=1 --anchors=big --latency=yes --delay=5ms   # Karpenter
 ./test_DREEM_extra.sh --rep=1 --anchors=big --latency=yes --delay=5ms \
                       --selectionPolicy=RANDOM --hardCheck=FALSE       # random, no checks
+./test_DREEM_extra.sh --rep=1 --anchors=big --latency=yes --delay=5ms \
+                      --selectionPolicy=MENOUER --hardCheck=FALSE      # Menouer et al., as published
 ```
 
 The Runner is started with `$MUBENCH/.venv/bin/python3` (muBench is one level above
@@ -214,10 +216,40 @@ hardChecks: "true"          # false: scale-downs skip the feasibility checks, in
 | `--selectionPolicy=RANDOM --hardCheck=FALSE` | `RANDOM_nochecks` (the random, aggressive baseline) |
 | `--selectionPolicy=RANDOM` (`--hardCheck` defaults to TRUE) | `RANDOM_checks` |
 | `--selectionPolicy=TOPSIS --profile=ENERGY\|QOS [--hardCheck=FALSE]` | `TOPSIS_ENERGY_nochecks`, `TOPSIS_QOS_checks`, ... |
+| `--selectionPolicy=MENOUER --hardCheck=FALSE` | `MENOUER_nochecks` (Menouer et al.'s autoscaler, as published) |
+| `--selectionPolicy=MENOUER` | `MENOUER_checks` (the same, switching off only nodes that can be drained) |
+| `--selectionPolicy=MENOUER --menouerLoadUp=65 [...]` | `MENOUER_checks_up65`, `MENOUER_nochecks_down30_per30`, ...: parameters other than the paper's |
 
 The arm runs like a DREEM arm of `test.sh` (fleet detached, placement reset, forecaster
 on for the workload) and saves the same files, plus `deploy/dreem_extra_<arm>.json` and
 `deploy/cluster-configuration-parameters_<arm>.yaml`.
+
+**Menouer et al. (`--selectionPolicy=MENOUER`).** The reactive node autoscaler of Menouer
+et al. (FRAME@HPDC 2024, the reactive phase of their TPDS 2026 paper), reimplemented on
+DREEM's operator in the DREEM-K8s branch `MENOUER_reimplementation`: every minute the
+forecaster checks the loads of the active workers and the pending pods, and the operator
+picks the node with PROMETHEE; the drain and the power actions are DREEM's. Its images,
+`dreem-k8s-menouer/menouer-operator` and `menouer-forecaster` 0.0.1
+(`MENOUER_OPERATOR_IMAGE` / `MENOUER_FORECAST_IMAGE` select other versions), run in the same
+`-simp` Deployments and accept their arguments. The script writes Menouer's parameters
+into `forecast-parameters` (DREEM ignores them) and saves it as
+`deploy/forecast-parameters_<arm>.yaml`; flags set them, the defaults are the paper's:
+
+| flag | key | default |
+|---|---|---|
+| `--menouerLoadUp` | `Menouer_load_up` | 70 (% load to scale up) |
+| `--menouerLoadDown` | `Menouer_load_down` | 40 (% load to scale down) |
+| `--menouerPendingSeconds` | `Menouer_pending_pod_seconds` | 120 (a pod pending this long scales up) |
+| `--menouerPeriod` | `Menouer_period_seconds` | 60 (seconds between decisions) |
+
+A value other than the paper's goes into the arm's name (`MENOUER_checks_up65`), so a
+sensitivity run lands next to the published one instead of replacing it, and
+`deploy/dreem_extra_<arm>.json` records all four. `selectionPolicy: MENOUER` only records the
+arm. The adaptations to the testbed are listed in the README of that branch. Before the
+first run check that the root filesystems of the workers, summed, are less than 40% used,
+or the scale-down never fires:
+`sum(node_filesystem_size_bytes{mountpoint="/"} - node_filesystem_avail_bytes{mountpoint="/"}) / sum(node_filesystem_size_bytes{mountpoint="/"})`
+over the worker instances.
 
 DREEM's forecaster request-rate query is restricted to the heavy services
 (`app_name=~"s[0-9]+"`), so the probe traffic does not drive scaling. The ramp-down
@@ -271,7 +303,7 @@ names, columns and layout of a Grafana "Download CSV":
 
 `<A>` is `DREEM-QOS`, `DREEM-ENERGY`, `BASELINE`, `CA`, `KARPENTER`, a `BASELINE_N` arm
 (`BASELINE_6`, `BASELINE_7_big`, ...) or a `test_DREEM_extra.sh` arm (`RANDOM_nochecks`,
-...); `<B>` the same without `DREEM-`. Without
+`MENOUER_nochecks`, ...); `<B>` the same without `DREEM-`. Without
 `--arms` every arm with a `<ARM>_window.json` is exported. Checked against the Grafana downloads of a run: same columns, same
 values.
 

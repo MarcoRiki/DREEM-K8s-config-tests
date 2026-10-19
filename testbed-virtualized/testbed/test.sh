@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # DREEM arms (ENERGY, QOS) and the no-scaling BASELINE for ONE repetition of ONE
-# scenario. Run test_CA.sh and test_Karpenter.sh afterwards with the same flags to add
-# the Cluster Autoscaler and Karpenter arms to the same folder.
+# scenario. Run test_CA.sh, test_Karpenter.sh and test_DREEM_extra.sh afterwards with the
+# same flags to add the Cluster Autoscaler, Karpenter and simplified-DREEM arms to the same
+# folder: the end of the run prints their commands.
 #
 # Every call:
 #   1. restores the fleet, also after a Cluster Autoscaler run deprovisioned nodes:
@@ -162,15 +163,30 @@ done
 
 log "Done: $RUN_DIR"
 ls -1 "$RUN_DIR"
+# the flags every arm of this folder must share
+SAME_FLAGS="--rep=$REP --anchors=$ANCHORS --latency=$LATENCY$([ "$LATENCY" = yes ] && echo " --delay=$DELAY")"
+SAME_FLAGS+=" --probe-rate=$PROBE_RATE --repair=$REPAIR$([ "$REPAIR" = yes ] && echo " --repair-interval=$REPAIR_INTERVAL")"
 cat <<EOF
 
 Still to do for this repetition:
   * export the dashboard data the notebook reads (Prometheus keeps 10 days):
       ./export-metrics.py --run-dir $RUN_DIR
 $(base_latency_hint)
-  * add the Cluster Autoscaler and Karpenter arms:
-      ./test_CA.sh --rep=$REP --anchors=$ANCHORS --latency=$LATENCY$([ "$LATENCY" = yes ] && echo " --delay=$DELAY") --repair=$REPAIR$([ "$REPAIR" = yes ] && echo " --repair-interval=$REPAIR_INTERVAL")
-      ./test_Karpenter.sh --rep=$REP --anchors=$ANCHORS --latency=$LATENCY$([ "$LATENCY" = yes ] && echo " --delay=$DELAY") --repair=$REPAIR$([ "$REPAIR" = yes ] && echo " --repair-interval=$REPAIR_INTERVAL")
+  * add the other arms to this folder, with the same flags:
+      ./test_CA.sh          $SAME_FLAGS     # Cluster Autoscaler
+      ./test_Karpenter.sh   $SAME_FLAGS     # Karpenter
+      ./test_DREEM_extra.sh $SAME_FLAGS --selectionPolicy=RANDOM --hardCheck=FALSE                  # RANDOM_nochecks
+      ./test_DREEM_extra.sh $SAME_FLAGS --selectionPolicy=RANDOM --hardCheck=TRUE                   # RANDOM_checks
+      ./test_DREEM_extra.sh $SAME_FLAGS --selectionPolicy=TOPSIS --profile=ENERGY --hardCheck=FALSE # TOPSIS_ENERGY_nochecks
+      ./test_DREEM_extra.sh $SAME_FLAGS --selectionPolicy=TOPSIS --profile=QOS --hardCheck=FALSE    # TOPSIS_QOS_nochecks
+      ./test_DREEM_extra.sh $SAME_FLAGS --selectionPolicy=TOPSIS --profile=ENERGY --hardCheck=TRUE  # TOPSIS_ENERGY_checks
+      ./test_DREEM_extra.sh $SAME_FLAGS --selectionPolicy=TOPSIS --profile=QOS --hardCheck=TRUE     # TOPSIS_QOS_checks
 EOF
 
-# ./test_CA.sh --rep=$REP --anchors=$ANCHORS --latency=$LATENCY$([ "$LATENCY" = yes ] && echo " --delay=$DELAY") --repair=$REPAIR$([ "$REPAIR" = yes ] && echo " --repair-interval=$REPAIR_INTERVAL")
+./test_CA.sh          $SAME_FLAGS     # Cluster Autoscaler
+sleep 60
+./test_Karpenter.sh   $SAME_FLAGS     # Karpenter
+sleep 60
+./test_DREEM_extra.sh $SAME_FLAGS --selectionPolicy=RANDOM --hardCheck=FALSE                  # RANDOM_nochecks
+sleep 60
+./test_DREEM_extra.sh $SAME_FLAGS --selectionPolicy=TOPSIS --profile=ENERGY --hardCheck=FALSE # TOPSIS_ENERGY_nochecks

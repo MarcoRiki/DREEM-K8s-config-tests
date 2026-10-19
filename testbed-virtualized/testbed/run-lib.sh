@@ -10,7 +10,7 @@ TESTBED="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TESTBED/lib.sh"
 export MGMT_KUBECONFIG WORKLOAD_KUBECONFIG
 # muBench lives one level above the repository root (mubench_changes/apply-changes.sh)
-MUBENCH="$(cd "${MUBENCH:-$TESTBED/../../../muBench}" && pwd)"
+MUBENCH="$(cd "${MUBENCH:-$TESTBED/../muBench}" && pwd)"
 # muBench's Runner needs the environment muBench was installed into (no need to activate it)
 PYTHON=${PYTHON:-$MUBENCH/.venv/bin/python3}
 

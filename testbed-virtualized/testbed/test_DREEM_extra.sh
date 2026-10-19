@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Simplified DREEM arm for ONE repetition of ONE scenario: another baseline for DREEM,
-# e.g. random node choice without feasibility checks. Run it after test.sh with the same
-# flags, like test_CA.sh, so its results land in the same folder as the other arms.
+# e.g. random node choice without feasibility checks, or Menouer et al.'s reactive node
+# autoscaler (--selectionPolicy=MENOUER). Run it after test.sh with the same flags, like
+# test_CA.sh, so its results land in the same folder as the other arms.
 #
 # WARNING: it deploys these images; the script checks that the registry has them first
 # (set DREEM_SIMP_OPERATOR_IMAGE / DREEM_SIMP_FORECAST_IMAGE to run other versions):
 #   harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-simplified/dreem-operator-simp:0.0.1
 #   harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-simplified/forecaster-simp:0.0.1
+# and with --selectionPolicy=MENOUER these, built from the DREEM-K8s branch
+# MENOUER_reimplementation (MENOUER_OPERATOR_IMAGE / MENOUER_FORECAST_IMAGE to override):
+#   harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-menouer/menouer-operator:0.0.1
+#   harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-menouer/menouer-forecaster:0.0.1
 #
 # The simplified DREEM runs as two Deployments of its own next to the original, in
 # namespace dreem: dreem-controller-manager-simp and forecast-deployment-simp, copies of
@@ -21,7 +26,16 @@
 # Its two settings go into ConfigMap cluster-configuration-parameters for the arm:
 #   selectionPolicy: "TOPSIS"   # TOPSIS, or RANDOM as a baseline (selectionProfile is then ignored)
 #   hardChecks: "true"          # false: scale-downs skip the feasibility checks, in the operator and in the forecaster
-# and are put back to TOPSIS / true at the end.
+# and are put back to TOPSIS / true at the end. The Menouer images ignore selectionPolicy
+# (it only records the arm) and read hardChecks in the operator: false is the published
+# algorithm, true keeps only the nodes that can be drained. Menouer's parameters go into
+# forecast-parameters, which DREEM ignores; the flags set them, the defaults are the paper's:
+#   --menouerLoadUp=70           Menouer_load_up             scale up at this load, %
+#   --menouerLoadDown=40         Menouer_load_down           scale down below this load, %
+#   --menouerPendingSeconds=120  Menouer_pending_pod_seconds scale up for a pod pending this long
+#   --menouerPeriod=60           Menouer_period_seconds      seconds between two decisions
+# A value other than the paper's is added to the arm's name (MENOUER_nochecks_up65,
+# MENOUER_checks_down30_per30, ...), so a sensitivity run never mixes with the published one.
 #
 # Every call: restores the fleet like test.sh (worker BMHs detached, DREEM powers nodes
 # through Redfish), switches the original DREEM off and the simplified one on, deploys the
@@ -30,42 +44,76 @@
 #   --selectionPolicy=RANDOM --hardCheck=FALSE                  RANDOM_nochecks
 #   --selectionPolicy=RANDOM                                    RANDOM_checks
 #   --selectionPolicy=TOPSIS --profile=ENERGY --hardCheck=FALSE TOPSIS_ENERGY_nochecks
+#   --selectionPolicy=MENOUER --hardCheck=FALSE                 MENOUER_nochecks (as published)
+#   --selectionPolicy=MENOUER                                   MENOUER_checks
 #
 # Usage:
-#   ./test_DREEM_extra.sh --rep=1 --selectionPolicy=TOPSIS|RANDOM [--hardCheck=TRUE|FALSE]
-#                         [--profile=ENERGY|QOS] [--anchors=big|small|any|mixed]
+#   ./test_DREEM_extra.sh --rep=1 --selectionPolicy=TOPSIS|RANDOM|MENOUER [--hardCheck=TRUE|FALSE]
+#                         [--profile=ENERGY|QOS] [--menouerLoadUp=70] [--menouerLoadDown=40]
+#                         [--menouerPendingSeconds=120] [--menouerPeriod=60] [--anchors=big|small|any|mixed]
 #                         [--latency=yes --delay=5ms | --latency=no] [--probe-rate=2]
 #                         [--repair=yes|no] [--repair-interval=600] [--skip-provision] [--force]
 #
 # --hardCheck defaults to TRUE, as in DREEM. --profile is the TOPSIS profile (DREEM's
-# selectionProfile) and is required with TOPSIS; RANDOM ignores it.
+# selectionProfile) and is required with TOPSIS; RANDOM and MENOUER have none. The
+# --menouer* flags only go with --selectionPolicy=MENOUER.
 
 set -euo pipefail
 # shellcheck source=run-lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-lib.sh"
 
-OPERATOR_IMAGE=${DREEM_SIMP_OPERATOR_IMAGE:-harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-simplified/dreem-operator-simp:0.0.1}
-FORECAST_IMAGE=${DREEM_SIMP_FORECAST_IMAGE:-harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-simplified/forecaster-simp:0.0.1}
-LEASE=db2bcae8.dreemk8s   # the operator's leader-election lease, the same in both versions
+LEASE=db2bcae8.dreemk8s   # the operator's leader-election lease, the same in every version
 
+# Menouer et al.'s published parameters (FRAME'24 Alg. 1, TPDS'26 Alg. 3)
+MENOUER_PAPER_UP=70; MENOUER_PAPER_DOWN=40; MENOUER_PAPER_PENDING=120; MENOUER_PAPER_PERIOD=60
 POLICY=""; HARD_CHECK=TRUE; PROFILE=""; ARGS=()
+M_UP=""; M_DOWN=""; M_PENDING=""; M_PERIOD=""
 for arg in "$@"; do   # this arm's options; the others are shared with the other test scripts
   case "$arg" in
-    --selectionPolicy=*) POLICY="${arg#--selectionPolicy=}" ;;
-    --hardCheck=*)       HARD_CHECK="${arg#--hardCheck=}" ;;
-    --profile=*)         PROFILE="${arg#--profile=}" ;;
-    *)                   ARGS+=("$arg") ;;
+    --selectionPolicy=*)        POLICY="${arg#--selectionPolicy=}" ;;
+    --hardCheck=*)              HARD_CHECK="${arg#--hardCheck=}" ;;
+    --profile=*)                PROFILE="${arg#--profile=}" ;;
+    --menouerLoadUp=*)          M_UP="${arg#--menouerLoadUp=}" ;;
+    --menouerLoadDown=*)        M_DOWN="${arg#--menouerLoadDown=}" ;;
+    --menouerPendingSeconds=*)  M_PENDING="${arg#--menouerPendingSeconds=}" ;;
+    --menouerPeriod=*)          M_PERIOD="${arg#--menouerPeriod=}" ;;
+    *)                          ARGS+=("$arg") ;;
   esac
 done
 parse_args "${ARGS[@]}"
 POLICY=${POLICY^^}; HARD_CHECK=${HARD_CHECK,,}; PROFILE=${PROFILE^^}
 case "$POLICY" in
-  TOPSIS) case "$PROFILE" in ENERGY|QOS) ;; *) die "--selectionPolicy=TOPSIS needs --profile=ENERGY or --profile=QOS" ;; esac ;;
-  RANDOM) [ -z "$PROFILE" ] || die "--selectionPolicy=RANDOM ignores the profile: drop --profile" ;;
-  *)      die "--selectionPolicy=TOPSIS or --selectionPolicy=RANDOM is required (see --help)" ;;
+  TOPSIS)  case "$PROFILE" in ENERGY|QOS) ;; *) die "--selectionPolicy=TOPSIS needs --profile=ENERGY or --profile=QOS" ;; esac ;;
+  RANDOM)  [ -z "$PROFILE" ] || die "--selectionPolicy=RANDOM ignores the profile: drop --profile" ;;
+  MENOUER) [ -z "$PROFILE" ] || die "--selectionPolicy=MENOUER has no profile: drop --profile" ;;
+  *)       die "--selectionPolicy=TOPSIS, RANDOM or MENOUER is required (see --help)" ;;
 esac
 case "$HARD_CHECK" in true|false) ;; *) die "--hardCheck must be TRUE or FALSE" ;; esac
 ARM="${POLICY}${PROFILE:+_$PROFILE}_$([ "$HARD_CHECK" = true ] && echo checks || echo nochecks)"
+if [ "$POLICY" = MENOUER ]; then
+  M_UP=${M_UP:-$MENOUER_PAPER_UP}; M_DOWN=${M_DOWN:-$MENOUER_PAPER_DOWN}
+  M_PENDING=${M_PENDING:-$MENOUER_PAPER_PENDING}; M_PERIOD=${M_PERIOD:-$MENOUER_PAPER_PERIOD}
+  for v in "--menouerLoadUp=$M_UP" "--menouerLoadDown=$M_DOWN" "--menouerPendingSeconds=$M_PENDING" "--menouerPeriod=$M_PERIOD"; do
+    [[ "${v#*=}" =~ ^[0-9]+$ ]] || die "$v: a whole number is needed"
+  done
+  { [ "$M_UP" -le 100 ] && [ "$M_DOWN" -ge 1 ]; } || die "--menouerLoadUp and --menouerLoadDown are percentages: 1 to 100"
+  [ "$M_DOWN" -lt "$M_UP" ] || die "--menouerLoadDown=$M_DOWN must be below --menouerLoadUp=$M_UP"
+  [ "$M_PERIOD" -ge 1 ] || die "--menouerPeriod must be at least 1 second"
+  # values other than the paper's go into the arm's name
+  [ "$M_UP" = "$MENOUER_PAPER_UP" ]           || ARM+="_up$M_UP"
+  [ "$M_DOWN" = "$MENOUER_PAPER_DOWN" ]       || ARM+="_down$M_DOWN"
+  [ "$M_PENDING" = "$MENOUER_PAPER_PENDING" ] || ARM+="_pend$M_PENDING"
+  [ "$M_PERIOD" = "$MENOUER_PAPER_PERIOD" ]   || ARM+="_per$M_PERIOD"
+elif [ -n "$M_UP$M_DOWN$M_PENDING$M_PERIOD" ]; then
+  die "--menouerLoadUp, --menouerLoadDown, --menouerPendingSeconds and --menouerPeriod only go with --selectionPolicy=MENOUER"
+fi
+if [ "$POLICY" = MENOUER ]; then
+  OPERATOR_IMAGE=${MENOUER_OPERATOR_IMAGE:-harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-menouer/menouer-operator:0.0.1}
+  FORECAST_IMAGE=${MENOUER_FORECAST_IMAGE:-harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-menouer/menouer-forecaster:0.0.1}
+else
+  OPERATOR_IMAGE=${DREEM_SIMP_OPERATOR_IMAGE:-harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-simplified/dreem-operator-simp:0.0.1}
+  FORECAST_IMAGE=${DREEM_SIMP_FORECAST_IMAGE:-harbor.ng.crownlabs.polito.it/marco-miracapillo/dreem-k8s-simplified/forecaster-simp:0.0.1}
+fi
 
 check_python
 check_clusters || exit 1
@@ -84,7 +132,8 @@ for image in "$OPERATOR_IMAGE" "$FORECAST_IMAGE"; do
   rc=0; image_in_registry "$image" || rc=$?
   case "$rc" in
     0) echo "image in the registry: $image" ;;
-    1) die "the registry does not have $image: push it, or set DREEM_SIMP_OPERATOR_IMAGE / DREEM_SIMP_FORECAST_IMAGE" ;;
+    1) die "the registry does not have $image: push it, or set DREEM_SIMP_OPERATOR_IMAGE / DREEM_SIMP_FORECAST_IMAGE" \
+           "(MENOUER_OPERATOR_IMAGE / MENOUER_FORECAST_IMAGE with --selectionPolicy=MENOUER)" ;;
     *) echo "WARNING: could not check whether the registry has $image (no docker, or no network);" \
             "if it is missing, the rollout below fails" ;;
   esac
@@ -140,6 +189,13 @@ set_extra_keys() {   # selectionPolicy hardChecks, in cluster-configuration-para
     -p "$(jq -n --arg p "$1" --arg h "$2" '{data: {selectionPolicy: $p, hardChecks: $h}}')" >/dev/null
 }
 
+set_menouer_keys() {   # Algorithm 1 of Menouer et al., with the values of the --menouer* flags
+  workload patch configmap forecast-parameters -n "$DREEM_NS" --type merge \
+    -p "$(jq -n --arg up "$M_UP" --arg down "$M_DOWN" --arg pending "$M_PENDING" --arg period "$M_PERIOD" \
+          '{data: {Menouer_load_up: $up, Menouer_load_down: $down,
+                   Menouer_pending_pod_seconds: $pending, Menouer_period_seconds: $period}}')" >/dev/null
+}
+
 simp_off() {   # the simplified DREEM off, its settings back to DREEM's defaults
   forecast_enabled false
   dreem_simp_scale 0
@@ -159,7 +215,7 @@ on_exit() {
 
 exec > >(tee -a "$RUN_DIR/logs/test_DREEM_extra.log") 2>&1
 trap on_exit EXIT
-log "Scenario $TAG, repetition $REP, arm: $ARM (selectionPolicy $POLICY, hardChecks $HARD_CHECK${PROFILE:+, profile $PROFILE})"
+log "Scenario $TAG, repetition $REP, arm: $ARM (selectionPolicy $POLICY, hardChecks $HARD_CHECK${PROFILE:+, profile $PROFILE}$([ "$POLICY" = MENOUER ] && echo ", load up $M_UP%, load down $M_DOWN%, pending ${M_PENDING}s, period ${M_PERIOD}s"))"
 echo "results: $RUN_DIR"
 
 if $SKIP_PROVISION; then
@@ -179,8 +235,12 @@ deploy_workload
 write_run_config "dreem_extra_$ARM" "$ARM"
 jq -n --arg arm "$ARM" --arg policy "$POLICY" --arg checks "$HARD_CHECK" --arg profile "$PROFILE" \
       --arg operator "$OPERATOR_IMAGE" --arg forecaster "$FORECAST_IMAGE" \
+      --arg up "$M_UP" --arg down "$M_DOWN" --arg pending "$M_PENDING" --arg period "$M_PERIOD" \
   '{arm: $arm, selectionPolicy: $policy, hardChecks: $checks,
     selectionProfile: (if $profile == "" then null else $profile end),
+    menouer: (if $policy == "MENOUER" then {load_up_pct: ($up | tonumber), load_down_pct: ($down | tonumber),
+                                             pending_pod_seconds: ($pending | tonumber),
+                                             period_seconds: ($period | tonumber)} else null end),
     operator_image: $operator, forecaster_image: $forecaster}' > "$RUN_DIR/deploy/dreem_extra_${ARM}.json"
 
 log "==================== $ARM ===================="
@@ -200,7 +260,12 @@ log "$ARM: uncordoning the workers before the workload"
 uncordon_workers
 
 log "$ARM: simplified DREEM, selectionPolicy $POLICY, hardChecks $HARD_CHECK, scaling enabled"
-[ "$POLICY" = RANDOM ] || set_selection_profile "$PROFILE"
+case "$POLICY" in
+  TOPSIS)  set_selection_profile "$PROFILE" ;;
+  MENOUER) set_menouer_keys
+           workload get configmap forecast-parameters -n "$DREEM_NS" -o yaml \
+             > "$RUN_DIR/deploy/forecast-parameters_${ARM}.yaml" ;;
+esac
 workload get configmap cluster-configuration-parameters -n "$DREEM_NS" -o yaml \
   > "$RUN_DIR/deploy/cluster-configuration-parameters_${ARM}.yaml"
 simp_forecast_restart

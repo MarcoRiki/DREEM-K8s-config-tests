@@ -141,11 +141,11 @@ config:
     # Must be federated from the target cluster (match[] in deploy/scrapefederate.yaml).
     # Empty disables the request-rate anticipation.
     Request_rate_query: sum(rate(mub_request_processing_latency_milliseconds_count{app_name=~"s[0-9]+"}[2m])) # microservices excluding the probes
-    Anticipation_max_multiplier: 1.5
-    Anticipation_min_request_rate: 0.5
-    Anticipation_min_cpu_percent: 5.0
-    Pending_check_period_seconds: 15
-    Pending_scale_up_after_seconds: 300
+    Anticipation_max_multiplier: 1.4
+    Anticipation_min_request_rate: 0.7
+    Anticipation_min_cpu_percent: 7.0
+    Pending_check_period_seconds: 10
+    Pending_scale_up_after_seconds: 60
     Pending_post_scale_up_grace_seconds: 60
     Pending_scale_down_cooldown_minutes: 10
 
