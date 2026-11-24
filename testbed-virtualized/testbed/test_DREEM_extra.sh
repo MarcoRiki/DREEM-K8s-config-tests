@@ -52,7 +52,9 @@
 #                         [--profile=ENERGY|QOS] [--menouerLoadUp=70] [--menouerLoadDown=40]
 #                         [--menouerPendingSeconds=120] [--menouerPeriod=60] [--anchors=big|small|any|mixed]
 #                         [--latency=yes --delay=5ms | --latency=no] [--probe-rate=2]
-#                         [--repair=yes|no] [--repair-interval=600] [--skip-provision] [--force]
+#                         [--repair=yes|no] [--repair-interval=600] [--seed=N] [--skip-provision] [--force]
+#
+# Without --seed the arm replays the trace the repetition already recorded (test.sh's --seed).
 #
 # --hardCheck defaults to TRUE, as in DREEM. --profile is the TOPSIS profile (DREEM's
 # selectionProfile) and is required with TOPSIS; RANDOM and MENOUER have none. The

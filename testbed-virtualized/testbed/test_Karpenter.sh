@@ -31,7 +31,9 @@
 # Usage:
 #   ./test_Karpenter.sh --rep=1 [--anchors=big|small|any|mixed] [--latency=yes --delay=5ms | --latency=no]
 #                       [--probe-rate=2] [--repair=yes|no] [--repair-interval=600]
-#                       [--base-hosts=<bmh>,<bmh>,<bmh>] [--skip-provision] [--force]
+#                       [--base-hosts=<bmh>,<bmh>,<bmh>] [--seed=N] [--skip-provision] [--force]
+#
+# Without --seed the arm replays the trace the repetition already recorded (test.sh's --seed).
 #
 # --skip-provision keeps the fleet as it is: the worker BMHs must be attached (so not right
 # after a DREEM run) and the base hosts must be workers of the base MachineDeployment.

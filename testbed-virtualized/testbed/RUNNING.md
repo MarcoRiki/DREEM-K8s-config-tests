@@ -19,6 +19,8 @@ testbed/
   test_CA.sh              the Cluster Autoscaler arm (same flags and folder as test.sh)
   test_Karpenter.sh       the Karpenter arm (same flags and folder; see ../Karpenter/)
   test_DREEM_extra.sh     a simplified DREEM arm: RANDOM, TOPSIS or Menouer et al., with or without checks
+  run-campaign.sh         several repetitions of the chosen configurations, a trace per repetition (section 1b)
+  selection-benchmark.sh  DREEM's decision time on this server's CPU, with the operator's limits (2.5 CPU, 4 GiB); see its --help
   run-lib.sh              the steps every test script shares
   deploy-mubench.sh       renders and applies the workload (heavy services, anchors, probes)
   latency.sh              emulated delay between workers: enable, disable, check
@@ -91,6 +93,7 @@ another one.
 | `--probe-rate=2` | requests/s sent to each probe |
 | `--repair=yes\|no` | `yes` runs `repair-pairs.py` during the workload: a probe that sits away from its anchor is deleted when the anchor's node has room, so the scheduler puts it back next to it. Results go to a separate `..._repair` folder; use the same value for every arm |
 | `--repair-interval=600` | seconds between repair passes; keep it above DREEM's 10-minute decision cycle |
+| `--seed=N` | draw the repetition's trace with seed N (section 1b). The first arm records it in `load_record.json`; the other arms of the repetition replay the same trace without `--seed`, and stop if their files differ. Without it, the files are sent as they are (and recorded) |
 | `--skip-provision` | keep the fleet as it is (no CA / Ironic / MachineDeployment steps) |
 | `--base-hosts=node-1,node-2,node-7` | test_Karpenter.sh only: the hosts Karpenter never removes (default: chosen from `profiles.json`, see below) |
 
@@ -281,6 +284,48 @@ The pieces also work on their own:
 ./sync-bmc-secrets.sh --dry-run          # show the DREEM BMC secrets it would write
 ```
 
+## 1b. Several repetitions: run-campaign.sh
+
+`run-campaign.sh` runs the test scripts above for several repetitions, one after the other:
+
+```bash
+./run-campaign.sh --runs=3 --first-rep=2 --dry-run    # the plan: seeds, order, commands
+./run-campaign.sh --runs=3 --first-rep=2              # all nine configurations, rep2 to rep4
+./run-campaign.sh --runs=2 --configs=DREEM-Energy,DREEM-QoS,Static-8,CA --anchors=big --latency=yes --delay=5ms
+```
+
+| flag | meaning |
+|------|---------|
+| `--runs=N` | number of repetitions (required) |
+| `--first-rep=R` | first repetition number (default 1): repetitions R to R+N-1 |
+| `--configs=...` | comma-separated, any case, default `all`: `DREEM-Energy`, `DREEM-QoS`, `Static-8`, `Static-6`, `CA`, `Karpenter`, `Random-Unchecked`, `TOPSIS-Unchecked`, `Menouer` (or DE, DQ, S8, S6, CA, KP, RU, TU, MN, or the arm names) |
+| `--seed=S` | repetition r replays the trace drawn with seed S + r (default 1000 + r) |
+| `--order=rotate\|fixed` | `rotate` (default) starts each repetition from another configuration |
+| `--pause=60` | seconds between two calls |
+| `--stop-on-failure` | stop at the first failed call (default: report it and go on) |
+| `--no-export` | do not run `export-metrics.py` at the end of each repetition |
+| `--dry-run` | print the plan and stop |
+
+The scenario flags (`--anchors`, `--latency`, `--delay`, `--probe-rate`, `--repair`, ...)
+go to every test script, `--base-hosts` to `test_Karpenter.sh` only.
+
+- **Trace.** muBench's TrafficGenerator draws the step files (`workload-<n>.json`) from
+  the `TrafficParameters` recipes; with a seed, each file is drawn after
+  `random.seed("<seed>:<file name>")`. The recipes, hence the request counts and rates, do
+  not change: only the arrival times and the services drawn do. Every arm of a repetition
+  replays the same trace (`rep<r>/load_record.json`, checksums included); each repetition
+  replays another one. The files of every arm are still copied to `deploy/load/`.
+- **Order.** test.sh's configurations (DREEM-Energy, DREEM-QoS, Static-8, Static-6) run in
+  one call, the others in one call each; `rotate` turns both the list of calls and the arms
+  inside test.sh's call by the repetition number.
+- **Resume.** An arm the repetition already finished (`<ARM>_window.json`) is skipped, so
+  the same command takes a stopped campaign up again; `--force` runs it again. A repetition
+  holding arms run before the trace was recorded (rep0 and rep1 of the paper) cannot take
+  seeded arms: start the campaign after it with `--first-rep`.
+- **Export.** At the end of each repetition `export-metrics.py` exports its arms, about
+  5 minutes after the last window (Prometheus keeps 10 days, a campaign can last longer).
+- **Log.** The plan and the outcome of every call go to `Result/<scenario>/campaign_<start>.log`.
+
 ## 2. Export the dashboard data
 
 ```bash
@@ -300,6 +345,7 @@ names, columns and layout of a Grafana "Download CSV":
 | `Service delay-<A>.csv`, `Service rate-<A>.csv` | Service delay, Service rate (one column per service) |
 | `Node info.csv` | Node info (`node:ip::systemUUID`), Cluster Autoscaler arm only |
 | `Node info-data-KARPENTER.csv` | the same for the Karpenter arm |
+| `DREEM CPU usage-data-<A>.csv`, `DREEM memory-data-<A>.csv` | not a dashboard panel: DREEM's own overhead, the CPU (cores) and working-set memory (bytes) of the pods in namespace `dreem`, one column per `deployment/container` (operator, forecaster - whose CPU includes the model inference - and the `-simp` copies). They run on the control plane, so the arms' energy leaves them out. Not written for the arms without DREEM (CA, Karpenter) |
 
 `<A>` is `DREEM-QOS`, `DREEM-ENERGY`, `BASELINE`, `CA`, `KARPENTER`, a `BASELINE_N` arm
 (`BASELINE_6`, `BASELINE_7_big`, ...) or a `test_DREEM_extra.sh` arm (`RANDOM_nochecks`,

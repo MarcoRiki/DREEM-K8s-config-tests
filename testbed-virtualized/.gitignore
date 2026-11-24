@@ -5,6 +5,9 @@
 
 # experiment results and logs
 /testbed/Result/
+# the decision benchmark compiled for Linux (selection-benchmark.sh) and its results
+/testbed/selection-bench.linux-*
+/testbed/overhead/
 /Karpenter/feasibility-check-*.log
 
 # Python and Jupyter

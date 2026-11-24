@@ -21,7 +21,12 @@
 #   ./test.sh --rep=1 [--arms="ENERGY QOS BASELINE BASELINE_N"] [--nodes=6 [--remove=big|small]]
 #             [--anchors=big|small|any|mixed] [--latency=yes --delay=5ms | --latency=no]
 #             [--probe-rate=2] [--repair=yes|no] [--repair-interval=600]
-#             [--skip-provision] [--force]
+#             [--seed=N] [--no-chain] [--skip-provision] [--force]
+#
+# --seed=N draws the trace of the repetition with seed N (run-lib.sh, prepare_load): every
+# arm of the repetition, also those of the other test scripts, replays it. --no-chain skips
+# the CA, Karpenter and simplified-DREEM arms this script runs at its end (run-campaign.sh
+# calls them itself).
 #
 # BASELINE_N is BASELINE on fewer workers: --nodes=N of them stay on, the others are
 # switched off for that arm (cordoned, drained, powered off) before the placement reset,
@@ -53,11 +58,12 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run-lib.sh"
 
 ARMS="ENERGY QOS BASELINE"
-NODES=""; REMOVE=""; ARGS=()
-for arg in "$@"; do   # BASELINE_N's options; the others are shared with test_CA.sh and test_Karpenter.sh
+NODES=""; REMOVE=""; CHAIN=true; ARGS=()
+for arg in "$@"; do   # BASELINE_N's options and --no-chain; the others are shared with test_CA.sh and test_Karpenter.sh
   case "$arg" in
     --nodes=*)  NODES="${arg#--nodes=}" ;;
     --remove=*) REMOVE="${arg#--remove=}" ;;
+    --no-chain) CHAIN=false ;;
     *)          ARGS+=("$arg") ;;
   esac
 done
@@ -183,6 +189,9 @@ $(base_latency_hint)
       ./test_DREEM_extra.sh $SAME_FLAGS --selectionPolicy=TOPSIS --profile=QOS --hardCheck=TRUE     # TOPSIS_QOS_checks
 EOF
 
+$CHAIN || exit 0   # run-campaign.sh runs the other arms itself
+# the chained arms replay the trace this run recorded (load_record.json): no --seed needed
+cd "$TESTBED"
 ./test_CA.sh          $SAME_FLAGS     # Cluster Autoscaler
 sleep 60
 ./test_Karpenter.sh   $SAME_FLAGS     # Karpenter

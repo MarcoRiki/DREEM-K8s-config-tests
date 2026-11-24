@@ -10,7 +10,7 @@ TESTBED="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TESTBED/lib.sh"
 export MGMT_KUBECONFIG WORKLOAD_KUBECONFIG
 # muBench lives one level above the repository root (mubench_changes/apply-changes.sh)
-MUBENCH="$(cd "${MUBENCH:-$TESTBED/../muBench}" && pwd)"
+MUBENCH="$(cd "${MUBENCH:-$TESTBED/../../../muBench}" && pwd)"
 # muBench's Runner needs the environment muBench was installed into (no need to activate it)
 PYTHON=${PYTHON:-$MUBENCH/.venv/bin/python3}
 
@@ -26,6 +26,7 @@ HEAVY_RATE_QUERY='sum(rate(mub_request_processing_latency_milliseconds_count{app
 
 REP=""; ARMS=""; ANCHORS=big; LATENCY=yes; DELAY=5ms; PROBE_RATE=2
 REPAIR=no; REPAIR_INTERVAL=600
+SEED=""   # --seed: the trace of the repetition (prepare_load); empty = the one already recorded, or the files as they are
 FORCE=false; SKIP_PROVISION=false
 TAG=""; RUN_DIR=""; WORKMODEL=""
 HEAVY=(); ANCHOR=(); PROBE=()
@@ -58,6 +59,7 @@ parse_args() {
       --probe-rate=*)   PROBE_RATE="${arg#--probe-rate=}" ;;
       --repair=*)       REPAIR="${arg#--repair=}" ;;
       --repair-interval=*) REPAIR_INTERVAL="${arg#--repair-interval=}" ;;
+      --seed=*)         SEED="${arg#--seed=}" ;;
       --skip-provision) SKIP_PROVISION=true ;;
       --force)          FORCE=true ;;
       -h|--help)        usage; exit 0 ;;
@@ -70,6 +72,7 @@ parse_args() {
   [[ "$PROBE_RATE" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "--probe-rate must be a number of requests/s"
   case "$REPAIR" in yes|no) ;; *) die "--repair must be yes or no" ;; esac
   [[ "$REPAIR_INTERVAL" =~ ^[0-9]+$ ]] || die "--repair-interval must be a number of seconds"
+  [[ -z "$SEED" || "$SEED" =~ ^[0-9]+$ ]] || die "--seed must be a whole number"
   if [ "$LATENCY" = yes ]; then
     [[ "$DELAY" =~ ^[0-9]+([.][0-9]+)?(us|ms|s)?$ ]] || die "invalid --delay: $DELAY"
     [[ "$DELAY" =~ (us|ms|s)$ ]] || DELAY="${DELAY}ms"
@@ -95,7 +98,7 @@ write_run_config() {   # name arm...
   local name=$1; shift
   jq -n --arg tag "$TAG" --arg rep "$REP" --arg arms "$*" --arg anchors "$ANCHORS" \
         --arg latency "$LATENCY" --arg delay "$DELAY" --arg rate "$PROBE_RATE" \
-        --arg repair "$REPAIR" --arg repair_interval "$REPAIR_INTERVAL" \
+        --arg repair "$REPAIR" --arg repair_interval "$REPAIR_INTERVAL" --arg seed "$SEED" \
         --arg started "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
         --argjson images "$(workload get deploy -n "$DREEM_NS" -o json \
                              | jq '[.items[] | {(.metadata.name): .spec.template.spec.containers[0].image}] | add // {}')" \
@@ -103,6 +106,7 @@ write_run_config() {   # name arm...
           latency_one_way: (if $latency == "yes" then $delay else null end),
           probe_rate_per_s: ($rate | tonumber),
           pair_repair_every_s: (if $repair == "yes" then ($repair_interval | tonumber) else null end),
+          load_seed: (if $seed == "" then null else ($seed | tonumber) end),
           dreem_images: $images, started: $started}' \
         > "$RUN_DIR/run_config_${name}.json"
   cp "$TESTBED/profiles.json" "$RUN_DIR/profiles.json"
@@ -491,8 +495,90 @@ deploy_workload() {
   mapfile -t HEAVY  < <(jq -r 'keys[] | select(test("^s[0-9]+$"))' "$WORKMODEL")
   mapfile -t ANCHOR < <(jq -r 'keys[] | select(test("^a[a-z]$"))' "$WORKMODEL")
   mapfile -t PROBE  < <(jq -r 'keys[] | select(test("^p[a-z]$"))' "$WORKMODEL")
+  prepare_load
   record_load
   record_dreem_config
+}
+
+# --- the trace: one per repetition --------------------------------------------------------
+# The Runner replays the workload files of RunnerParameters.json (workload-<n>.json; the
+# ramp-down workload-<n>d.json are copies), which muBench's TrafficGenerator draws from the
+# TrafficParameters recipes: Poisson arrivals, each to an ingress service drawn at random.
+# With --seed=N they are drawn again before the arm, each file after random.seed("N:<file>"),
+# so every repetition can replay a trace of its own. Every arm of a repetition must replay
+# the same trace: the first arm writes the seed and the files' checksums to
+# <rep>/load_record.json; a later arm draws the files again with the recorded seed (no
+# --seed needed) and stops if they differ, e.g. because a recipe changed in between. Without
+# --seed and without a record, the files are sent as they are, as before, and recorded.
+
+LOAD_RECORD=load_record.json
+
+load_files() {   # seed|"": draws the workload files with the seed ("" leaves them), prints their record
+  (cd "$MUBENCH" && "$PYTHON" - "$MUBENCH" "$RUNNER_PARAMS" "$1" <<'EOF'
+import hashlib, json, random, re, sys
+from pathlib import Path
+
+mubench, runner_params, seed = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+sys.path.insert(0, str(mubench / "Benchmarks" / "TrafficGenerator"))
+import TrafficGenerator  # muBench's own generator, unchanged: it draws from the global random module
+
+recipes = {}
+for path in sorted((mubench / "Configs").glob("TrafficParameters*.json")):
+    try:
+        doc = json.loads(path.read_text())
+    except ValueError:
+        continue
+    if doc.get("OutputFile"):
+        recipes.setdefault(doc["OutputFile"], []).append((path, doc))
+
+files = {}
+for name in json.loads(runner_params.read_text())["RunnerParameters"]["workload_files_path_list"]:
+    target = mubench / name
+    if re.fullmatch(r".*d\.json", target.name):
+        continue  # ramp-down copy of workload-<n>.json (refresh_rampdown_copies)
+    entry = {}
+    if seed:
+        found = recipes.get(target.name, [])
+        if len(found) != 1:
+            sys.exit(f"{target.name}: {len(found)} TrafficParameters files name it as OutputFile, one is needed")
+        path, doc = found[0]
+        random.seed(f"{seed}:{target.name}")  # one stream per file: changing a recipe leaves the other files alone
+        events = TrafficGenerator.get_Traffic(doc["TrafficParameters"])
+        target.write_text(json.dumps(events, indent=2))  # as RunTrafficGen.py writes it
+        entry["recipe"] = path.name
+    else:
+        events = json.loads(target.read_text())
+    entry["requests"] = len(events)
+    entry["minutes"] = round(max(e["time"] for e in events) / 60000, 1)
+    entry["sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    files[target.name] = entry
+print(json.dumps({"seed": int(seed) if seed else None, "files": files}))
+EOF
+  )
+}
+
+prepare_load() {   # the trace of this repetition, the same for all its arms
+  local record="$RUN_DIR/$LOAD_RECORD" recorded current
+  if [ -e "$record" ]; then
+    recorded=$(jq -r '.seed // ""' "$record")
+    [ -z "$SEED" ] || [ "$SEED" = "$recorded" ] \
+      || die "rep$REP replays the trace of ${recorded:+seed }${recorded:-the files as they were} ($record): every arm of a repetition replays the same trace. Drop --seed, or use another --rep"
+    SEED=$recorded
+  elif compgen -G "$RUN_DIR/*_window.json" >/dev/null; then
+    # arms run before the trace was recorded: their trace cannot be known
+    [ -z "$SEED" ] || die "rep$REP holds arms run before the trace was recorded: a seeded trace would differ from theirs. Use another --rep"
+    echo "WARNING: rep$REP holds arms run before the trace was recorded: this arm cannot be checked against them"
+  fi
+  current=$(load_files "$SEED") || die "could not prepare the workload files in $MUBENCH"
+  if [ -e "$record" ]; then
+    jq -e --argjson now "$current" '.files == $now.files' "$record" >/dev/null \
+      || die "the workload files differ from those of the first arm of rep$REP ($record): a TrafficParameters recipe or RunnerParameters.json changed in between"
+    echo "trace: ${SEED:+seed $SEED, }the same as the other arms of rep$REP"
+  else
+    jq --argjson rep "$REP" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{rep: $rep, recorded: $at} + .' \
+      <<<"$current" > "$record"
+    echo "trace: ${SEED:+seed $SEED, drawn again; }recorded in $record"
+  fi
 }
 
 record_dreem_config() {   # the forecaster's settings as deployed, for reproducibility
@@ -565,6 +651,12 @@ if stale:
 (out / "load_summary.txt").write_text("\n".join(lines) + "\n")
 print("\n".join(lines))
 EOF
+  if [ -n "$SEED" ]; then
+    echo "seed: $SEED (each workload-<n>.json drawn by muBench's TrafficGenerator after random.seed(\"$SEED:<file name>\"))"
+  else
+    echo "seed: none (the workload files as they were in $MUBENCH/SimulationWorkspace)"
+  fi | tee -a "$dir/load_summary.txt"
+  [ ! -e "$RUN_DIR/$LOAD_RECORD" ] || cp "$RUN_DIR/$LOAD_RECORD" "$dir/"
   echo "load recorded in $dir"
 }
 
@@ -668,6 +760,7 @@ reset_placement() {   # arm
 
 start_watcher() {   # jsonl file: pod placement and node state every 30 s
   local out=$1
+  : > "$out"   # a fresh file: an arm run again after a failure must not append to the failed run's lines
   (
     set +e
     while true; do

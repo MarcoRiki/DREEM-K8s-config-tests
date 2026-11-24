@@ -12,7 +12,9 @@
 # Usage:
 #   ./test_CA.sh --rep=1 [--anchors=big|small|any|mixed] [--latency=yes --delay=5ms | --latency=no]
 #                [--probe-rate=2] [--repair=yes|no] [--repair-interval=600]
-#                [--skip-provision] [--force]
+#                [--seed=N] [--skip-provision] [--force]
+#
+# Without --seed the arm replays the trace the repetition already recorded (test.sh's --seed).
 #
 # Pass the same --repair as test.sh: the repair changes placement and restarts, so an
 # arm run with it cannot be compared with one run without it.

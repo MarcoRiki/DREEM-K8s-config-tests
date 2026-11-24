@@ -14,6 +14,16 @@ reads them unchanged:
   Service rate-<A>.csv                    Service rate (req/s)      one column per service
   Node info.csv                           Node info                 CA only, node:ip::systemUUID
   Node info-data-KARPENTER.csv            Node info                 the same for Karpenter
+  DREEM CPU usage-data-<A>.csv            -                         DREEM's own pods, cores, one column per deployment/container
+  DREEM memory-data-<A>.csv               -                         the same, working-set bytes
+
+The two DREEM files are the controller's overhead: the CPU and memory of the pods in
+DREEM's namespace (--dreem-namespace), the operator and the forecaster, whose CPU includes
+the model inference. They run on the control plane, which the CPU panels leave out, so the
+energy of the arms does not include them. The pods change name at every restart: the
+columns group them by the deployment their name starts with (dreem-controller-manager,
+forecast-deployment, their -simp copies, ...). An arm without DREEM (CA, KARPENTER) has
+no such data and gets no such file.
 
 <A> is DREEM-QOS, DREEM-ENERGY, BASELINE, CA, KARPENTER, a BASELINE on fewer workers
 (test.sh's BASELINE_N: BASELINE_6, BASELINE_7_big, ...) or a simplified DREEM arm
@@ -33,7 +43,7 @@ older than that - the script refuses a window Prometheus no longer holds.
 
 Usage:
   ./export-metrics.py --run-dir Result/<scenario>/rep<N> [--out DIR] [--arms QOS,ENERGY]
-                      [--before 60] [--after 300] [--control-plane-ip IP]
+                      [--before 60] [--after 300] [--control-plane-ip IP] [--dreem-namespace dreem]
                       [--prometheus-url http://host:port] [--force] [--dry-run]
 """
 
@@ -81,8 +91,21 @@ def ip_key(address):
         return (999,)
 
 
-def panels(control_plane_ip):
-    """one entry per CSV: file name pattern, query, column name from the series labels"""
+def dreem_pods(expr, namespace):
+    """expr over the containers of DREEM's pods (cAdvisor), summed per deployment and container;
+    the deployment is the pod name without its ReplicaSet hash and pod suffix"""
+    selector = f'namespace="{namespace}", container!="", container!="POD", image!=""'
+    return ('sum by (deployment, container) (label_replace(' + expr.replace("SELECTOR", selector)
+            + ', "deployment", "$1", "pod", "(.+)-[a-z0-9]+-[a-z0-9]{5}"))')
+
+
+def dreem_column(labels):
+    return f'{labels.get("deployment") or labels.get("pod", "")}/{labels.get("container", "")}'
+
+
+def panels(control_plane_ip, dreem_namespace="dreem"):
+    """one entry per CSV: file name pattern, query, column name from the series labels;
+    "optional": no data is not a failure (the DREEM pods, absent in the CA and Karpenter arms)"""
     excluded = f"{control_plane_ip}:9100"
     return [
         {"file": "Active Worker-{dreem}.csv",
@@ -117,6 +140,14 @@ def panels(control_plane_ip):
          "expr": "kube_node_info",
          "column": node_info_column,
          "order": node_info_order},
+        {"file": "DREEM CPU usage-data-{dreem}.csv",
+         "expr": dreem_pods("rate(container_cpu_usage_seconds_total{SELECTOR}[2m])", dreem_namespace),
+         "column": dreem_column,
+         "optional": True},
+        {"file": "DREEM memory-data-{dreem}.csv",
+         "expr": dreem_pods("container_memory_working_set_bytes{SELECTOR}", dreem_namespace),
+         "column": dreem_column,
+         "optional": True},
     ]
 
 
@@ -230,6 +261,7 @@ def main():
     parser.add_argument("--before", type=int, default=60, help="seconds before the window (default 60)")
     parser.add_argument("--after", type=int, default=300, help="seconds after the window (default 300)")
     parser.add_argument("--control-plane-ip", help="excluded from the CPU panels (default: looked up)")
+    parser.add_argument("--dreem-namespace", default="dreem", help="DREEM's pods, for its own CPU and memory (default dreem)")
     parser.add_argument("--prometheus-url", help="query Prometheus here instead of through the API server")
     parser.add_argument("--kubeconfig", default=os.environ.get("WORKLOAD_KUBECONFIG", os.path.expanduser("~/workload.kubeconfig")))
     parser.add_argument("--namespace", default="monitoring")
@@ -276,7 +308,7 @@ def main():
         first = math.floor((start - args.before) / STEP_S) * STEP_S
         last = math.ceil((end + args.after) / STEP_S) * STEP_S
         print(f"\n{arm}: {utc(first)} -> {utc(last)} UTC, step {STEP_S} s")
-        for panel in panels(cp_ip):
+        for panel in panels(cp_ip, args.dreem_namespace):
             if "arms" in panel and arm not in panel["arms"]:
                 continue
             name = panel["file"].format(dreem=DREEM_PREFIXED.get(arm, arm), plain=arm)
@@ -294,6 +326,9 @@ def main():
                 failed = True
                 continue
             if stats["rows"] == 0:
+                if panel.get("optional"):
+                    print(f"  {name}: no data in the window, not written (DREEM not running in this arm)")
+                    continue
                 print(f"  {name}: FAILED - no data in the window")
                 failed = True
                 continue
